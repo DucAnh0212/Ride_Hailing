@@ -18,6 +18,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # 9092 cho bên ngoài (Window), 29092 cho mạng nội bộ Docker
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
@@ -29,7 +30,8 @@ services:
       - "14333:1433"
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "RideAdmin#2026"
+      # Đã bảo mật tuyệt đối, kéo từ file .env gốc
+      MSSQL_SA_PASSWORD: ${SQL_SERVER_PASSWORD}
     volumes:
       - sqlserver_data:/var/opt/mssql
 
@@ -40,6 +42,34 @@ services:
     volumes:
       - mongodb_data:/data/db
 
+  # 1. API Hứng Tọa Độ GPS (Container số 1)
+  location_service:
+    build: ./matching_location_service
+    container_name: ride_hailing_location_api
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/
+      - KAFKA_BROKER=kafka:29092 # Đã chuyển sang cổng nội bộ
+    depends_on:
+      - mongodb
+      - kafka
+    restart: unless-stopped
+      
+  # 2. Worker Ghép Cuốc (Container số 2)
+  matching_worker:
+    build: ./matching_location_service
+    container_name: ride_hailing_matching_worker
+    command: ["python", "geo_matcher.py"]
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/
+      - KAFKA_BROKER=kafka:29092 # Đã chuyển sang cổng nội bộ
+    depends_on:
+      - mongodb
+      - kafka 
+    restart: unless-stopped
+
+# Khai báo Volumes nằm ngoài cùng
 volumes:
   sqlserver_data:
   mongodb_data:
