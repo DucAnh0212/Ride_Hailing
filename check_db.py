@@ -1,12 +1,22 @@
+import os
+import logging
 import pyodbc
 from pymongo import MongoClient
+from dotenv import load_dotenv
 
-print("🔍 ĐANG KIỂM TRA DỮ LIỆU TRONG CONTAINER...\n")
+# Khởi tạo Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | NODE: DB-Check | %(levelname)s | %(message)s')
 
-sql_host = "localhost"
-sql_port = "14333"
-sql_user = "sa"
-sql_pass = "RideAdmin#2026"
+load_dotenv()
+
+logging.info("🔍 ĐANG KIỂM TRA DỮ LIỆU TRONG CONTAINER...\n")
+
+# Lấy cấu hình từ biến môi trường
+sql_host = os.getenv("SQL_SERVER_HOST", "localhost")
+sql_port = os.getenv("SQL_SERVER_PORT", "1433")
+sql_user = os.getenv("SQL_SERVER_USER", "sa")
+sql_pass = os.getenv("SQL_SERVER_PASSWORD", "")
+mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 
 # 1. Kiểm tra SQL Server
 try:
@@ -15,18 +25,18 @@ try:
     cursor = sql_conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM Users")
-    print(f"✅ SQL Server -> Bảng Users có: {cursor.fetchone()[0]} dòng")
+    logging.info(f"✅ SQL Server -> Bảng Users có: {cursor.fetchone()[0]} dòng")
     
     cursor.execute("SELECT COUNT(*) FROM Vehicles")
-    print(f"✅ SQL Server -> Bảng Vehicles có: {cursor.fetchone()[0]} dòng")
+    logging.info(f"✅ SQL Server -> Bảng Vehicles có: {cursor.fetchone()[0]} dòng")
 except Exception as e:
-    print(f"❌ Lỗi SQL Server: {e}")
+    logging.error(f"❌ Lỗi SQL Server: {e}")
 
 # 2. Kiểm tra MongoDB
 try:
-    mongo_client = MongoClient("mongodb://localhost:27017/")
+    mongo_client = MongoClient(mongo_uri)
     db = mongo_client["RideHailingDB"]
     rides_count = db["Rides"].count_documents({})
-    print(f"✅ MongoDB -> Collection Rides có: {rides_count} dòng")
+    logging.info(f"✅ MongoDB -> Collection Rides có: {rides_count} dòng")
 except Exception as e:
-    print(f"❌ Lỗi MongoDB: {e}")
+    logging.error(f"❌ Lỗi MongoDB: {e}")
