@@ -1,28 +1,32 @@
 import os
 import random
+import logging
 from datetime import datetime, timedelta
 import pyodbc
 from pymongo import MongoClient
 from faker import Faker
 from dotenv import load_dotenv
 
-# Tải cấu hình từ file .env
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | NODE: Data-Seed | %(levelname)s | %(message)s')
+
 load_dotenv()
 fake = Faker('vi_VN')
 
-NUM_RIDERS = 2000       # Số lượng Khách hàng
-NUM_DRIVERS = 500       # Số lượng Tài xế
-NUM_RIDES = 15000       # Số lượng Chuyến xe lưu vào MongoDB
-BATCH_SIZE = 1000       # Kích thước mỗi lô dữ liệu (Ghi xuống DB sau mỗi 1000 dòng)
+NUM_RIDERS = 2000       
+NUM_DRIVERS = 500       
+NUM_RIDES = 15000       
+BATCH_SIZE = 1000       
 
-sql_host = "localhost"
-sql_port = "14333"
-sql_user = "sa"
-sql_pass = "RideAdmin#2026"
+# Lấy cấu hình bảo mật từ .env
+sql_host = os.getenv("SQL_SERVER_HOST", "localhost")
+sql_port = os.getenv("SQL_SERVER_PORT", "1433")
+sql_user = os.getenv("SQL_SERVER_USER", "sa")
+sql_pass = os.getenv("SQL_SERVER_PASSWORD", "")
+mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+
 connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={sql_host},{sql_port};UID={sql_user};PWD={sql_pass};TrustServerCertificate=yes;"
 
 try:
-    # Kết nối ban đầu để tạo DB
     sql_conn = pyodbc.connect(connection_string, autocommit=True)
     cursor = sql_conn.cursor()
     cursor.execute("""
@@ -47,7 +51,6 @@ try:
         )
     """)
     
-    # Tạo bảng Vehicles
     cursor.execute("""
         CREATE TABLE Vehicles (
             VehicleID INT IDENTITY(1,1) PRIMARY KEY,
@@ -60,18 +63,19 @@ try:
     sql_conn.commit()
 
 except Exception as e:
-    print(f"Lỗi kết nối: {e}")
+    logging.error(f"Lỗi kết nối SQL: {e}")
     exit()
 
 try:
-    mongo_client = MongoClient(os.getenv("MONGODB_URI"))
+    mongo_client = MongoClient(mongo_uri)
     mongo_db = mongo_client["RideHailingDB"]
     rides_collection = mongo_db["Rides"]
-    rides_collection.delete_many({}) # Xóa data cũ
+    rides_collection.delete_many({}) 
 except Exception as e:
+    logging.error(f"Lỗi kết nối MongoDB: {e}")
     exit()
 
-# A. Nạp dữ liệu Users (Riders & Drivers)
+# A. Nạp dữ liệu Users
 def seed_users(role, total_count):
     inserted = 0
     while inserted < total_count:
@@ -79,38 +83,35 @@ def seed_users(role, total_count):
         current_batch_size = min(BATCH_SIZE, total_count - inserted)
         
         for _ in range(current_batch_size):
-            # Dùng fake.unique để đảm bảo PhoneNumber không bị trùng làm sập DB
             batch_data.append((fake.name(), fake.unique.phone_number(), role))
             
         cursor.executemany("INSERT INTO Users (FullName, PhoneNumber, Role) VALUES (?, ?, ?)", batch_data)
         sql_conn.commit()
         inserted += current_batch_size
-        print(f"   + Đã nạp {inserted}/{total_count} {role}...")
+        logging.info(f"Đã nạp {inserted}/{total_count} {role}...")
 
 seed_users('Rider', NUM_RIDERS)
 seed_users('Driver', NUM_DRIVERS)
 
-# Lấy danh sách ID thực tế từ SQL Server
+# B. Nạp dữ liệu Vehicles
 cursor.execute("SELECT UserID FROM Users WHERE Role = 'Driver'")
 driver_ids = [row[0] for row in cursor.fetchall()]
 
 cursor.execute("SELECT UserID FROM Users WHERE Role = 'Rider'")
 rider_ids = [row[0] for row in cursor.fetchall()]
 
-# B. Nạp dữ liệu Vehicles cho Drivers
 vehicles_data = []
 vehicle_types = ['Honda Vision', 'Yamaha Exciter', 'Toyota Vios', 'Hyundai Accent', 'VinFast VF e34']
 
 for driver_id in driver_ids:
-    # fake.unique để đảm bảo Biển số xe không trùng nhau
     license_plate = fake.unique.bothify(text='??-#####', letters='ABCDEFGHJKLMNPRSTUVWXYZ')
     vehicles_data.append((driver_id, f"29{license_plate}", random.choice(vehicle_types), fake.color_name()))
 
-# Do số lượng tài xế (500) nhỏ hơn BATCH_SIZE (1000) nên ta insert luôn 1 lượt
 cursor.executemany("INSERT INTO Vehicles (DriverID, LicensePlate, VehicleType, Color) VALUES (?, ?, ?, ?)", vehicles_data)
 sql_conn.commit()
+logging.info("Đã nạp dữ liệu Vehicles thành công.")
 
-# C. Nạp dữ liệu Chuyến xe vào MongoDB theo Lô
+# C. Nạp dữ liệu Chuyến xe vào MongoDB
 inserted_rides = 0
 statuses = ['Completed', 'Cancelled', 'In_Progress']
 
@@ -135,9 +136,9 @@ while inserted_rides < NUM_RIDES:
         
     rides_collection.insert_many(rides_batch)
     inserted_rides += current_batch_size
-    print(f"   + Đã nạp {inserted_rides}/{NUM_RIDES} chuyến xe vào MongoDB...")
+    logging.info(f"Đã nạp {inserted_rides}/{NUM_RIDES} chuyến xe vào MongoDB...")
 
-# Đóng kết nối
 cursor.close()
 sql_conn.close()
 mongo_client.close()
+logging.info("HOÀN TẤT NẠP DỮ LIỆU!")
