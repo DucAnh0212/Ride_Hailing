@@ -69,6 +69,30 @@ services:
       - kafka 
     restart: unless-stopped
 
+  identity-service:
+    build: ./identity-service
+    container_name: ride_hailing_identity
+    ports:
+      - "3001:3001"
+    environment:
+      - DB_SERVER=sqlserver
+    depends_on:
+      - sqlserver
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: ride_hailing_api_gateway
+    ports:
+      - "3000:3000"
+    depends_on:
+      - identity-service
+
+  frontend:
+    build: ./frontend
+    container_name: ride_hailing_frontend
+    ports:
+      - "80:80"
+
 # Khai báo Volumes nằm ngoài cùng
 volumes:
   sqlserver_data:
