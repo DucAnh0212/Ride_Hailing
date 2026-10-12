@@ -24,6 +24,7 @@ sql_user = os.getenv("SQL_SERVER_USER", "sa")
 sql_pass = os.getenv("SQL_SERVER_PASSWORD", "")
 mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 
+
 connection_string = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={sql_host},{sql_port};UID={sql_user};PWD={sql_pass};TrustServerCertificate=yes;"
 
 try:
