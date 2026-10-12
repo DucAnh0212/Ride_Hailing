@@ -69,6 +69,18 @@ services:
       - kafka 
     restart: unless-stopped
 
+  analytics_worker:
+    build: ./analytics_service
+    container_name: ride_hailing_analytics_worker
+    environment:
+      # Sử dụng mạng nội bộ của Docker
+      - KAFKA_BROKER=kafka:29092
+      - MONGO_URI=mongodb://mongodb:27017/
+    depends_on:
+      - kafka
+      - mongodb
+    restart: unless-stopped
+
 # Khai báo Volumes nằm ngoài cùng
 volumes:
   sqlserver_data:
