@@ -32,18 +32,15 @@ public class FareCalculationService {
     }
 
     /**
-     * Tính toán cước phí chuyến đi và làm tròn đến hàng nghìn
+     * Tính toán cước phí chuyến đi
      */
     public BigDecimal calculateFare(Double pickupLat, Double pickupLong, Double destLat, Double destLong) {
         double distanceKm = calculateDistanceKm(pickupLat, pickupLong, destLat, destLong);
-        double rawFare = BASE_FARE + (distanceKm * RATE_PER_KM);
-
-        // Làm tròn đến 1,000 VND gần nhất (VD: 34,700 -> 35,000)
-        long roundedFare = Math.round(rawFare / 1000.0) * 1000;
-        if (roundedFare < (long) BASE_FARE) {
-            roundedFare = (long) BASE_FARE;
+        double fare = BASE_FARE + (distanceKm * RATE_PER_KM);
+        if (fare < BASE_FARE) {
+            fare = BASE_FARE;
         }
 
-        return BigDecimal.valueOf(roundedFare).setScale(2, RoundingMode.HALF_UP);
+        return BigDecimal.valueOf(fare).setScale(2, RoundingMode.HALF_UP);
     }
 }
