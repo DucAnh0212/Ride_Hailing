@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.3.2
+    image: confluentinc/cp-zookeeper:7.7.1
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -10,7 +10,7 @@ services:
       - "2181:2181"
 
   kafka:
-    image: confluentinc/cp-kafka:7.3.2
+    image: confluentinc/cp-kafka:7.7.1
     depends_on:
       - zookeeper
     ports:
@@ -30,8 +30,7 @@ services:
       - "14333:1433"
     environment:
       ACCEPT_EULA: "Y"
-      # Đã bảo mật tuyệt đối, kéo từ file .env gốc
-      MSSQL_SA_PASSWORD: ${SQL_SERVER_PASSWORD}
+      MSSQL_SA_PASSWORD: ${SQL_SERVER_PASSWORD:-RideAdmin2026}
     volumes:
       - sqlserver_data:/var/opt/mssql
 
