@@ -47,6 +47,7 @@ try:
             UserID INT IDENTITY(1,1) PRIMARY KEY,
             FullName NVARCHAR(100),
             PhoneNumber VARCHAR(50) UNIQUE,
+            PasswordHash VARCHAR(255) NULL,
             Role VARCHAR(20) CHECK (Role IN ('Rider', 'Driver')),
             CreatedAt DATETIME DEFAULT GETDATE()
         )

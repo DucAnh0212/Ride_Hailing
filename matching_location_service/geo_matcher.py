@@ -46,13 +46,17 @@ try:
         if msg.error():
             continue 
 
-        req = json.loads(msg.value().decode('utf-8'))
-        event_id = req['metadata']['event_id']          
-        trip_id = req['metadata']['correlation_id']     
-        rider_lat = req['payload']['pickup_lat']
-        rider_lng = req['payload']['pickup_long']       
-        dest_lat = req['payload'].get('destination_lat')
-        dest_lng = req['payload'].get('destination_long')
+        try:
+            req = json.loads(msg.value().decode('utf-8'))
+            event_id = req['metadata']['event_id']          
+            trip_id = req['metadata']['correlation_id']     
+            rider_lat = req['payload']['pickup_lat']
+            rider_lng = req['payload']['pickup_long']       
+            dest_lat = req['payload'].get('destination_lat')
+            dest_lng = req['payload'].get('destination_long')
+        except Exception as e:
+            logging.error(f"POISON PILL SKIP | Bỏ qua message sai định dạng trên trip.requested: {e}")
+            continue
 
         logging.info(f"EVENT: TRIP_REQUESTED | Nhận cuốc [ {trip_id} ] tại [{rider_lat}, {rider_lng}]")
 
@@ -77,7 +81,7 @@ try:
             }
         }).limit(5))
 
-        # VÒNG CHUNG KẾT (Tính ETA)
+        # KHÓA BI QUAN (Pessimistic Locking) bằng find_one_and_update nguyên tử (Atomic)
         best_driver_id = None
         lowest_eta = float('inf') 
 
@@ -92,15 +96,22 @@ try:
             estimated_seconds = (manhattan_distance / 9.7) + 45
             
             if estimated_seconds < lowest_eta:
-                lowest_eta = estimated_seconds
-                best_driver_id = driver['driver_id']
+                # Chỉ chốt nếu khóa thành công tài xế đang AVAILABLE -> BUSY
+                locked = live_locations.find_one_and_update(
+                    {"driver_id": driver['driver_id'], "status": "AVAILABLE"},
+                    {"$set": {"status": "BUSY"}}
+                )
+                if locked:
+                    # Nếu trước đó đã lock 1 tài xế khác có ETA cao hơn, nhả lại AVAILABLE
+                    if best_driver_id is not None:
+                        live_locations.update_one({"driver_id": best_driver_id}, {"$set": {"status": "AVAILABLE"}})
+                    lowest_eta = estimated_seconds
+                    best_driver_id = driver['driver_id']
 
         # ĐÓNG GÓI OUTPUT
         timestamp_now = datetime.utcnow().isoformat() + "Z"
         
         if best_driver_id:
-            # KHÓA BI QUAN (Pessimistic Locking)
-            live_locations.update_one({"driver_id": best_driver_id}, {"$set": {"status": "BUSY"}})
             
             event = {
                 "metadata": {
