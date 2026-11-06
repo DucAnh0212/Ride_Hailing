@@ -33,7 +33,7 @@ try:
     })
     
     # Lắng nghe (Subscribe) toàn bộ các topic hiện có
-    consumer.subscribe(['trip.requested', 'driver.matched', 'matching.failed'])
+    consumer.subscribe(['trip.requested', 'driver.matched', 'matching.failed', 'trip.started', 'trip.completed', 'trip.cancelled'])
     
     logging.info("ANALYTICS ELT WORKER ĐÃ SẴN SÀNG HÚT DỮ LIỆU VỀ DATA WAREHOUSE.")
 except Exception as e:

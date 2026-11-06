@@ -27,22 +27,29 @@ const verifyToken = (req, res, next) => {
 
 // Request Auth đi thẳng tới Identity Service
 app.use('/api/auth', createProxyMiddleware({
-    target: 'http://localhost:3001/api/auth',
+    target: process.env.IDENTITY_SERVICE_URL || 'http://identity-service:3001',
     changeOrigin: true,
 }));
 
 // Các API khác yêu cầu JWT
 app.use('/api/users', verifyToken, createProxyMiddleware({
-    target: 'http://localhost:3001/api/users',
+    target: process.env.IDENTITY_SERVICE_URL || 'http://identity-service:3001',
     changeOrigin: true,
 }));
 
-app.use('/api/orders', verifyToken, createProxyMiddleware({
-    target: 'http://localhost:3002/api/orders',
+// Route chuyến đi tới Booking Service
+app.use('/api/trips', createProxyMiddleware({
+    target: process.env.BOOKING_SERVICE_URL || 'http://booking-service:8080',
     changeOrigin: true,
 }));
 
-const PORT = 8000;
+// Route vị trí GPS tới Location Service
+app.use('/api/location', createProxyMiddleware({
+    target: process.env.LOCATION_SERVICE_URL || 'http://location_service:8000',
+    changeOrigin: true,
+}));
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`API Gateway đang chạy tại http://localhost:${PORT}`);
 });
