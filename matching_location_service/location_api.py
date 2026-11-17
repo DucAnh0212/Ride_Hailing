@@ -36,6 +36,22 @@ class LocationData(BaseModel):
     latitude: float
     longitude: float
 
+class DriverStatusData(BaseModel):
+    driver_id: int
+    status: str  # AVAILABLE, BUSY, OFFLINE
+
+@app.put("/api/location/status")
+async def update_driver_status(data: DriverStatusData):
+    try:
+        live_locations.update_one(
+            {"driver_id": {"$in": [data.driver_id, str(data.driver_id)]}},
+            {"$set": {"status": data.status, "updated_at": datetime.utcnow()}}
+        )
+        return {"status": "success", "driver_id": data.driver_id, "driver_status": data.status}
+    except Exception as e:
+        logging.error(f"Lỗi cập nhật trạng thái xe {data.driver_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/location")
 async def update_location(data: LocationData):
     try:

@@ -33,7 +33,11 @@ public class KafkaConsumerService {
     @Autowired
     private KafkaProducerService kafkaProducerService;
 
-    @KafkaListener(topics = "driver.matched", groupId = "booking-group")
+    @KafkaListener(
+            topics = "driver.matched",
+            groupId = "booking-group",
+            properties = {"spring.json.value.default.type=com.uber.booking.events.DriverMatchedEvent"}
+    )
     @Transactional
     public void consumeDriverMatchedEvent(DriverMatchedEvent event) {
         String eventId = event.getMetadata().getEvent_id();
@@ -71,7 +75,11 @@ public class KafkaConsumerService {
         idempotencyLogRepository.save(log);
     }
     
-    @KafkaListener(topics = "matching.failed", groupId = "booking-group")
+    @KafkaListener(
+            topics = "matching.failed",
+            groupId = "booking-group",
+            properties = {"spring.json.value.default.type=com.uber.booking.events.MatchingFailedEvent"}
+    )
     @Transactional
     public void consumeMatchingFailedEvent(MatchingFailedEvent event) {
         String eventId = event.getMetadata().getEvent_id();
@@ -131,7 +139,11 @@ public class KafkaConsumerService {
     /**
      * Lắng nghe Dead Letter Queue (DLQ / DLT) để giám sát các gói tin lỗi
      */
-    @KafkaListener(topics = {"driver.matched.DLT", "matching.failed.DLT"}, groupId = "booking-dlq-group")
+    @KafkaListener(
+            topics = {"driver.matched.DLT", "matching.failed.DLT"},
+            groupId = "booking-dlq-group",
+            properties = {"spring.json.value.default.type=java.util.Map"}
+    )
     public void consumeDeadLetterQueue(ConsumerRecord<String, Object> record) {
         LOGGER.severe(String.format("🚨 [DEAD LETTER QUEUE] Phát hiện gói tin lỗi từ topic [%s] | Key: %s | Nội dung: %s",
                 record.topic(), record.key(), record.value()));
