@@ -29,7 +29,7 @@ try:
         'group.id': 'matching_group_v2',
         'auto.offset.reset': 'latest'
     })
-    consumer.subscribe(['trip.requested'])
+    consumer.subscribe(['trip.requested', 'trip.completed', 'trip.cancelled'])
 
     producer = Producer({'bootstrap.servers': KAFKA_BROKER})
     logging.info("MATCHING SERVICE ĐÃ SẴN SÀNG.")
@@ -48,6 +48,25 @@ try:
 
         try:
             req = json.loads(msg.value().decode('utf-8'))
+            topic_name = msg.topic()
+        except Exception as e:
+            logging.error(f"POISON PILL SKIP | Bỏ qua message sai định dạng: {e}")
+            continue
+
+        # Giải phóng trạng thái tài xế về AVAILABLE khi chuyến xe hoàn thành hoặc bị hủy
+        if topic_name in ('trip.completed', 'trip.cancelled'):
+            driver_id_raw = req.get('payload', {}).get('driver_id')
+            trip_id = req.get('payload', {}).get('trip_id')
+            if driver_id_raw:
+                driver_id_val = int(driver_id_raw) if str(driver_id_raw).isdigit() else driver_id_raw
+                live_locations.update_one(
+                    {"driver_id": {"$in": [driver_id_val, str(driver_id_raw)]}},
+                    {"$set": {"status": "AVAILABLE", "updated_at": datetime.utcnow()}}
+                )
+                logging.info(f"EVENT: {topic_name.upper()} | Đã đổi trạng thái tài xế {driver_id_raw} về AVAILABLE (Cuốc: {trip_id})")
+            continue
+
+        try:
             event_id = req['metadata']['event_id']          
             trip_id = req['metadata']['correlation_id']     
             rider_lat = req['payload']['pickup_lat']
@@ -55,7 +74,7 @@ try:
             dest_lat = req['payload'].get('destination_lat')
             dest_lng = req['payload'].get('destination_long')
         except Exception as e:
-            logging.error(f"POISON PILL SKIP | Bỏ qua message sai định dạng trên trip.requested: {e}")
+            logging.error(f"POISON PILL SKIP | Bỏ qua message thiếu trường trên trip.requested: {e}")
             continue
 
         logging.info(f"EVENT: TRIP_REQUESTED | Nhận cuốc [ {trip_id} ] tại [{rider_lat}, {rider_lng}]")
