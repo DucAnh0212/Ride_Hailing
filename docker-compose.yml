@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.7.1
@@ -44,7 +42,7 @@ services:
     build: ./booking_service
     container_name: ride-hailing-booking
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - DB_URL=jdbc:sqlserver://sqlserver:1433;databaseName=RideHailingDB;encrypt=true;trustServerCertificate=true
       - DB_USERNAME=sa
@@ -59,7 +57,7 @@ services:
     build: ./matching_location_service
     container_name: ride_hailing_location_api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - MONGO_URI=mongodb://mongodb:27017/
       - KAFKA_BROKER=kafka:29092
@@ -73,6 +71,7 @@ services:
     container_name: ride_hailing_matching_worker
     command: ["python", "geo_matcher.py"]
     environment:
+      - BOOKING_SERVICE_URL=http://booking-service:8080
       - MONGO_URI=mongodb://mongodb:27017/
       - KAFKA_BROKER=kafka:29092
     depends_on:
@@ -95,8 +94,10 @@ services:
     build: ./identity-service
     container_name: ride_hailing_identity
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     environment:
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env (at least 32 bytes)}
+      - DB_PORT=1433
       - DB_SERVER=sqlserver
       - DB_PASSWORD=${SQL_SERVER_PASSWORD:-RideAdmin#2026}
     depends_on:
@@ -109,6 +110,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env (at least 32 bytes)}
       - IDENTITY_SERVICE_URL=http://identity-service:3001
       - BOOKING_SERVICE_URL=http://booking-service:8080
       - LOCATION_SERVICE_URL=http://location_service:8000
@@ -126,3 +128,4 @@ services:
 volumes:
   sqlserver_data:
   mongodb_data:
+

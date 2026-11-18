@@ -61,3 +61,12 @@ async def update_location(data: LocationData):
     except Exception as e:
         logging.error(f"Lỗi cập nhật tọa độ xe {data.driver_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/location/{driver_id}")
+async def get_location(driver_id: int):
+    # Internal endpoint; Gateway restricts access to the authenticated driver's ID.
+    driver = live_locations.find_one({"driver_id": driver_id}, {"_id": 0})
+    if not driver:
+        return {"driver_id": driver_id, "status": "OFFLINE", "location": None, "active_trip_id": None}
+    return {"driver_id": driver_id, "status": driver.get("status", "OFFLINE"),
+            "location": driver.get("location"), "active_trip_id": driver.get("active_trip_id"),
+            "updated_at": driver.get("updated_at")}

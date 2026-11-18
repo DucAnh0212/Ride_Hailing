@@ -575,3 +575,28 @@ p {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
 }
+
+.booking-fields { border: 0; min-width: 0; padding: 0; }
+.point-fields { border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem; margin: 1rem 0; min-width: 0; }
+.point-fields legend { padding: 0 .5rem; }
+.coordinate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.btn:focus-visible { outline: 3px solid #818cf8; outline-offset: 3px; }
+.notice { padding: 1rem; margin: 1rem 0; border: 1px solid #64748b; border-radius: 10px; }
+.error { color: #f87171; border-color: #f87171; }
+.auth-container .error { color: #b91c1c; }
+.sync-bar { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+.trip-status { color: #ffcc00; font-size: 1.4rem; font-weight: 600; }
+.trip-details { display: grid; grid-template-columns: auto 1fr; gap: .75rem; margin: 1.5rem 0; overflow-wrap: anywhere; }
+.trip-details dt { color: var(--text-muted); }
+.trip-history { margin-top: 2rem; }
+.trip-history ul { list-style: none; display: grid; gap: .5rem; margin-top: 1rem; }
+.trip-history .btn { text-align: left; overflow-wrap: anywhere; }
+.trip-history [aria-pressed=true] { border-color: #ffcc00; }
+@media (max-width: 600px) { .app-container { padding: 1rem; } .glass-panel { padding: 1.25rem; } .dashboard-header { flex-wrap: wrap; gap: 1rem; } .coordinate-grid { grid-template-columns: 1fr; } }
+
+.history-filters { margin-top: 1rem; flex-wrap: wrap; }
+.driver-summary { display: flex; flex-wrap: wrap; gap: 1.5rem; padding: 1rem 0; }
+.account-panel { border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+.account-panel summary { cursor: pointer; }
+.ride-actions { flex-wrap: wrap; }
