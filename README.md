@@ -359,7 +359,6 @@ analytics_service/           Thu thập sự kiện vào MongoDB
 data_seed.py                 Seed minh họa, có thể xóa dữ liệu cũ
 docker-compose.yml           Hạ tầng và ứng dụng
 README.md                    Hướng dẫn chính (cài đặt và sử dụng)
-docs/TECHNICAL_HANDOVER.md    README kỹ thuật trước đây, giữ nguyên nội dung
 ~~~
 
-Xem thêm [chi tiết Frontend](frontend/README.md) và [bàn giao kỹ thuật](docs/TECHNICAL_HANDOVER.md).
+Xem thêm [chi tiết Frontend](frontend/README.md).
