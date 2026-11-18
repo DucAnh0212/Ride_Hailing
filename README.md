@@ -2,7 +2,7 @@
 
 Hệ thống đặt xe phân tán cho hành khách và tài xế. Tài liệu này dành cho người chạy demo và thành viên tiếp nhận mã nguồn trên nhánh **Tùng**.
 
-README.md và [README_USER.md](README_USER.md) có cùng nội dung. Bản README kỹ thuật trước đây được giữ nguyên tại [docs/TECHNICAL_HANDOVER.md](docs/TECHNICAL_HANDOVER.md).
+Bản README kỹ thuật trước đây được giữ nguyên tại [docs/TECHNICAL_HANDOVER.md](docs/TECHNICAL_HANDOVER.md).
 
 ## 1. Chức năng và công nghệ
 
@@ -47,7 +47,7 @@ Các cổng cần trống: 80, 3000, 3001, 8080, 8000, 14333, 27017, 9092, 2181.
 
 ## 3. Tải mã nguồn và cấu hình
 
-### 3.1. Tải nhánh Tùng
+### 3.1. Tải 
 
 Nếu máy chưa có dự án:
 
@@ -360,8 +360,7 @@ matching_location_service/   Location, Matching, giải phóng tài xế
 analytics_service/           Thu thập sự kiện vào MongoDB
 data_seed.py                 Seed minh họa, có thể xóa dữ liệu cũ
 docker-compose.yml           Hạ tầng và ứng dụng
-README.md                    Hướng dẫn chính, nội dung giống README_USER.md
-README_USER.md               Hướng dẫn người dùng
+README.md                    Hướng dẫn chính (cài đặt và sử dụng)
 docs/TECHNICAL_HANDOVER.md    README kỹ thuật trước đây, giữ nguyên nội dung
 ~~~
 
