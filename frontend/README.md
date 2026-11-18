@@ -54,4 +54,3 @@ Chạy npm run lint và npm run build. Bộ test tự động giữ riêng tại
 - Sau khi contract ổn định: SSE/WebSocket/thông báo backend. Không tích hợp Kafka vào trình duyệt.
 
 Giữ contract Booking; bản bàn giao kèm cập nhật vòng đời Matching và API đọc trạng thái Location.
-

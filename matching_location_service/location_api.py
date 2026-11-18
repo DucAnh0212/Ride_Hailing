@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime
+from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pymongo import MongoClient
@@ -35,6 +36,27 @@ class LocationData(BaseModel):
     driver_id: int
     latitude: float
     longitude: float
+
+class DriverStatusData(BaseModel):
+    driver_id: int
+    status: Literal["AVAILABLE", "OFFLINE"]
+
+
+@app.put("/api/location/status")
+async def update_driver_status(data: DriverStatusData):
+    # Internal online/offline operation. Only Matching may acquire/release BUSY.
+    identity = {"driver_id": {"$in": [data.driver_id, str(data.driver_id)]}}
+    updated = live_locations.update_one(
+        {**identity, "status": {"$in": ["AVAILABLE", "OFFLINE"]},
+         "active_trip_id": {"$exists": False}},
+        {"$set": {"status": data.status, "updated_at": datetime.utcnow()}}
+    )
+    if updated.matched_count == 0:
+        if live_locations.find_one(identity) is None:
+            raise HTTPException(status_code=404, detail="Driver location not found")
+        raise HTTPException(status_code=409, detail="Driver has an active reservation or is BUSY")
+    return {"status": "success", "driver_id": data.driver_id, "driver_status": data.status}
+
 
 @app.post("/api/location")
 async def update_location(data: LocationData):

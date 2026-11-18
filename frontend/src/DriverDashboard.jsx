@@ -88,4 +88,3 @@ export default function DriverDashboard({ user }) {
     <TripHistory trips={model.trips} selected={trip?.tripId} busy={model.busy} onSelect={id => { setSelected(isActive(model.trips.find(t => t.tripId === id)) ? null : id); setConfirm(null); model.inspect(id); }} />
   </>;
 }
-

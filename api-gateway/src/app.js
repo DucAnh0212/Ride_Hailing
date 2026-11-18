@@ -106,4 +106,3 @@ function createApp({ secret, identityUrl, bookingUrl, locationUrl, timeoutMs = 5
     return app;
 }
 module.exports = { createApp };
-

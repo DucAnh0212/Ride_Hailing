@@ -49,3 +49,5 @@ Giữ event contract Booking. Matching dùng active_trip_id để chỉ giải p
 
 GET /api/location/me qua Gateway trả trạng thái tài xế hiện tại. Endpoint nội bộ GET /api/location/{driver_id} phục vụ Gateway.
 Công cụ repair_driver.py chỉ dành cho dữ liệu legacy BUSY không có active_trip_id; dừng Matching, chạy không có --apply để kiểm tra trước, rồi mới áp dụng sau khi Booking xác nhận không còn chuyến đang chạy. Không tự chạy khi khởi động.
+
+PUT /api/location/status được hợp nhất từ tin+duc-anh nhưng chỉ nhận AVAILABLE/OFFLINE khi tài xế không BUSY và không có active_trip_id; trả 404 nếu chưa có vị trí, 409 nếu đang giữ chuyến, 422 nếu status không hợp lệ. Endpoint chỉ dùng nội bộ, chưa expose qua Gateway hay FE. Matching là nơi duy nhất giữ/giải phóng BUSY.
