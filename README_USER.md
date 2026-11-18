@@ -47,7 +47,7 @@ Các cổng cần trống: 80, 3000, 3001, 8080, 8000, 14333, 27017, 9092, 2181.
 
 ## 3. Tải mã nguồn và cấu hình
 
-### 3.1. Tải nhánh Tùng
+### 3.1. Tải 
 
 Nếu máy chưa có dự án:
 
