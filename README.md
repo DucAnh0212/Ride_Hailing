@@ -1,53 +1,368 @@
-# Ride Hailing — bàn giao phần Tùng (P0)
+# Ride Hailing — Hướng dẫn cài đặt và sử dụng
 
-## Chạy trên máy mới
+Hệ thống đặt xe phân tán cho hành khách và tài xế. Tài liệu này dành cho người chạy demo và thành viên tiếp nhận mã nguồn trên nhánh **Tùng**.
 
-Cần Docker Compose. Node.js 22 cần cho cài dependency và build ngoài Docker.
+README.md và [README_USER.md](README_USER.md) có cùng nội dung. Bản README kỹ thuật trước đây được giữ nguyên tại [docs/TECHNICAL_HANDOVER.md](docs/TECHNICAL_HANDOVER.md).
 
-1. Sao chép `.env.example` thành `.env`, cấu hình mật khẩu SQL Server. Không commit `.env`.
-2. Sinh JWT secret bằng `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`, gán vào `JWT_SECRET` trong `.env`. Compose cấp cùng giá trị cho Identity và Gateway. Secret tối thiểu 32 byte; thiếu secret thì ứng dụng từ chối khởi động.
-3. Chạy `docker compose up -d sqlserver mongodb zookeeper kafka`, đợi SQL Server sẵn sàng.
-4. Chạy `docker compose build identity-service api-gateway frontend`.
-5. Chạy `docker compose run --rm --no-deps identity-service npm run db:init`. Lệnh tạo RideHailingDB, Users, Vehicles nếu thiếu và bổ sung IsActive; không xóa dữ liệu hoặc thay ID/role hiện có.
-6. Chạy `docker compose up -d --build`. Mở web tại `http://localhost`, Gateway tại `http://localhost:3000`.
+## 1. Chức năng và công nghệ
 
-Không dùng `data_seed.py` để nâng cấp dữ liệu đang có: script của nhóm có DROP bảng. Nếu chủ động seed lại, phải khởi động lại Identity để bổ sung IsActive. Tài khoản seed thiếu PasswordHash không được đăng nhập; hãy đăng ký tài khoản demo mới qua API/UI. Không tự đặt lại mật khẩu của người dùng cũ.
+Hành khách đăng ký, đăng nhập, đặt xe bằng tọa độ, theo dõi và hủy chuyến. Tài xế gửi vị trí, xem chuyến được giao, bắt đầu và hoàn thành chuyến. Sau khi kết thúc hoặc hủy, tài xế quay về trạng thái chờ; hóa đơn và lịch sử vẫn được lưu.
 
-## Contract tương thích
+| Thành viên | Phụ trách | Công nghệ |
+|---|---|---|
+| Tùng | Identity, API Gateway, Frontend | Node.js, Express, JWT, React, Vite |
+| Tín | Booking/Trip, Saga, vòng đời chuyến, tính cước | Java 17, Spring Boot, SQL Server, Kafka |
+| Đức Anh | Location, Matching, Analytics, hạ tầng, seed | Python, FastAPI, MongoDB, Kafka, Docker Compose |
 
-- Giữ Users.UserID là INT và role DB/API là `Rider` hoặc `Driver`. Đăng ký nhận `passenger`, `rider`, `driver`, không phân biệt hoa thường.
-- `/api/auth/register` nhận `{email, password, role, fullName?}`; trường email tiếp tục chứa email hoặc số điện thoại, tối đa 50 ký tự. Mật khẩu mới tối thiểu 8 ký tự, tối đa 72 byte UTF-8. Trả 201 với `{token, user}`; trùng tài khoản trả 409.
-- `/api/auth/login` giữ request/response cũ. Sai thông tin, tài khoản vô hiệu hóa hoặc thiếu hash trả 401.
-- `GET /api/auth/me` và Gateway `GET /api/users/me` trả `{user}`. Gateway kiểm tra tài khoản còn hoạt động trước mỗi thao tác nghiệp vụ.
-- `/api/trips` giữ payload camelCase của Booking. `/api/orders` là alias tương đương. Các route nghiệp vụ yêu cầu `Authorization: Bearer <token>`.
-- Hành khách tạo chuyến cho chính mình; Gateway gán passengerId từ danh tính đã xác thực. Gửi ID khác trả 403.
-- Danh sách/chi tiết chỉ trả chuyến của hành khách hoặc tài xế được gán. Chỉ tài xế được gán được start/complete. Chủ chuyến hoặc tài xế được gán có thể cancel theo state machine hiện có của Booking.
-- `/api/location` chỉ cho Driver POST tọa độ của chính mình; driver_id là số. Không thay đổi schema FastAPI/MongoDB hoặc Kafka event của Đức Anh.
-- Correlation ID được truyền bằng `X-Correlation-ID`; đây là ID request, không thay thế correlation_id/trip_id của Kafka.
+~~~text
+Trình duyệt -> API Gateway -> Identity / Booking / Location
+Identity / Booking -> SQL Server
+Location / Matching -> MongoDB RideHailingDB
+Booking -> Kafka -> Matching -> Kafka -> Booking
+Booking -> Kafka -> Matching (giải phóng tài xế)
+Kafka -> Analytics -> MongoDB DataWarehouseDB
+~~~
 
-## Ranh giới truy cập
+Matching tìm tài xế AVAILABLE trong bán kính tối đa 3 km, xét tối đa 5 ứng viên gần nhất rồi xếp hạng theo ước lượng khoảng cách/ETA. Booking tự chuyển chuyến sang ACCEPTED sau khi ghép; chưa có bước tài xế nhận/từ chối riêng.
 
-Compose chỉ bind Identity (3001), Booking (8080), Location (8000) vào 127.0.0.1 để công cụ phát triển trên máy vẫn hoạt động. Các service tiếp tục dùng tên Docker nội bộ. Máy khác phải gọi Gateway.
+## 2. Chuẩn bị
 
-Các cổng localhost vẫn là đường truy cập tin cậy cho người phát triển; Booking/Location chưa tự kiểm tra JWT. Không dùng cấu hình này như môi trường production đa người dùng. Kiểm tra quyền sở hữu tại Gateway sử dụng GET hiện có của Booking; khi mở rộng luồng gán lại tài xế, Tín cần kiểm tra quyền trong cùng transaction cập nhật ở Booking để loại bỏ race giữa đọc và ghi.
+- Git để tải mã nguồn.
+- Docker Desktop đang chạy Linux containers, có Docker Compose.
+- Trình duyệt hiện đại; dùng hai phiên riêng cho hành khách và tài xế.
+- Node.js 22 nếu phát triển ngoài Docker. Không cần cài Java/Python riêng khi chạy toàn bộ bằng Docker.
+- Internet để tải image và dependency lần đầu.
 
-Frontend hành khách đã nối đặt, theo dõi và hủy chuyến thật (P1), khôi phục phiên đăng nhập và xử lý mất kết nối. Màn hình tài xế đã nối gửi vị trí, danh sách/chi tiết chuyến, bắt đầu và hoàn thành chuyến thật; có hồ sơ, lịch sử, tổng cước và thông báo trong trang cho hai vai trò. Matching đã giải phóng BUSY sau hoàn thành/hủy; FE đọc trạng thái thật qua GET /api/location/me. Online/offline, nhận/từ chối riêng và hồ sơ xe còn phụ thuộc API backend. Xem frontend/README.md để chạy và kiểm thử. API mặc định theo hostname của trang web, cổng 3000; VITE_API_GATEWAY_URL là cấu hình tùy chọn tại thời điểm build.
+Các lệnh bên dưới dùng PowerShell trên Windows, không yêu cầu gọi pwsh hoặc dùng SkipHttpErrorCheck.
 
-## Kiểm tra bản bàn giao
+~~~powershell
+git --version
+docker version
+docker compose version
+~~~
 
-Bộ test và công cụ mô phỏng chỉ giữ ở máy phát triển, không nằm trong nhánh bàn giao. Có thể kiểm tra build bằng npm ci trong mỗi ứng dụng Node, npm run lint và npm run build trong frontend, cùng docker compose build. Kiểm tra thủ công qua luồng hai tài khoản trong frontend/README.md.
+docker version phải có phần Server kết nối thành công. Nếu báo dockerDesktopLinuxEngine không tồn tại, mở Docker Desktop và đợi engine sẵn sàng.
 
-Khi chạy Node ngoài Docker: copy `.env.example` riêng trong mỗi service thành `.env`, điền DB_PASSWORD và JWT_SECRET giống nhau; URL mặc định dùng localhost. Compose dùng `.env` gốc. JWT cũ bị vô hiệu khi đổi secret.
+Các cổng cần trống: 80, 3000, 3001, 8080, 8000, 14333, 27017, 9092, 2181. Không chạy hai bản dự án đồng thời vì Compose dùng tên container cố định.
 
-## Git
+## 3. Tải mã nguồn và cấu hình
 
-Nhánh Tùng bàn giao source, manifest/lockfile, Dockerfile, .dockerignore và .env.example. Không đưa bộ test, công cụ mô phỏng, kết quả kiểm thử, bản sao local, .env, node_modules hoặc dist vào commit. Dùng npm ci để cài theo lockfile.
+### 3.1. Tải nhánh Tùng
 
-## Matching và Location
+Nếu máy chưa có dự án:
 
-Giữ event contract Booking. Matching dùng active_trip_id để chỉ giải phóng đúng chuyến sau hoàn thành/hủy; FinishedTrips chặn ghép lại chuyến kết thúc, MatchingResults lưu kết quả để gửi lại. Đối soát Booking mỗi 15 giây cho reservation có mã chuyến. Không bảo đảm exactly-once xuyên MongoDB/Kafka.
+~~~powershell
+git clone --branch "Tùng" https://github.com/DucAnh0212/Ride_Hailing.git
+Set-Location Ride_Hailing
+~~~
 
-GET /api/location/me qua Gateway trả trạng thái tài xế hiện tại. Endpoint nội bộ GET /api/location/{driver_id} phục vụ Gateway.
-Công cụ repair_driver.py chỉ dành cho dữ liệu legacy BUSY không có active_trip_id; dừng Matching, chạy không có --apply để kiểm tra trước, rồi mới áp dụng sau khi Booking xác nhận không còn chuyến đang chạy. Không tự chạy khi khởi động.
+Nếu đã có dự án với thay đổi chưa commit, lưu công việc trước khi cập nhật/chuyển nhánh. Không dùng git reset --hard để cập nhật.
 
-PUT /api/location/status được hợp nhất từ tin+duc-anh nhưng chỉ nhận AVAILABLE/OFFLINE khi tài xế không BUSY và không có active_trip_id; trả 404 nếu chưa có vị trí, 409 nếu đang giữ chuyến, 422 nếu status không hợp lệ. Endpoint chỉ dùng nội bộ, chưa expose qua Gateway hay FE. Matching là nơi duy nhất giữ/giải phóng BUSY.
+Tất cả lệnh Docker dưới đây chạy từ thư mục chứa docker-compose.yml.
+
+### 3.2. Tạo .env
+
+~~~powershell
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+}
+notepad .env
+~~~
+
+Điền SQL_SERVER_PASSWORD và JWT_SECRET. Mật khẩu SQL phải đáp ứng chính sách độ mạnh của SQL Server. JWT_SECRET tối thiểu 32 byte; Compose cấp cùng giá trị cho Identity và Gateway.
+
+Sinh secret bằng PowerShell, không cần cài Node:
+
+~~~powershell
+$secretBytes = New-Object byte[] 32
+$generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$generator.GetBytes($secretBytes)
+$generator.Dispose()
+[Convert]::ToBase64String($secretBytes)
+~~~
+
+Chép kết quả vào dòng JWT_SECRET= trong .env. Không chia sẻ hoặc commit .env.
+
+Nếu đã có database từ lần chạy trước, giữ mật khẩu SQL hiện có: sửa biến môi trường không tự đổi mật khẩu trong volume đang lưu dữ liệu.
+
+Kiểm tra cấu hình mà không in bí mật:
+
+~~~powershell
+docker compose config --quiet
+~~~
+
+## 4. Khởi động lần đầu
+
+### 4.1. Chạy hạ tầng
+
+~~~powershell
+docker compose up -d sqlserver mongodb zookeeper kafka
+docker compose ps
+docker compose logs --tail 40 sqlserver
+~~~
+
+Đợi SQL Server báo sẵn sàng nhận kết nối. Trạng thái container Up chưa bảo đảm ứng dụng bên trong đã sẵn sàng.
+
+Kiểm tra Kafka:
+
+~~~powershell
+docker compose exec -T kafka kafka-topics --bootstrap-server kafka:29092 --list
+~~~
+
+Máy mới có thể chưa có topic; lệnh phải kết thúc không báo lỗi kết nối. Nếu chưa sẵn sàng, đợi rồi thử lại.
+
+### 4.2. Build và khởi tạo database
+
+~~~powershell
+docker compose build identity-service api-gateway frontend
+docker compose run --rm --no-deps identity-service npm run db:init
+~~~
+
+Chỉ tiếp tục khi db:init thành công. Lệnh tạo RideHailingDB và các bảng Identity còn thiếu, bổ sung IsActive, không xóa dữ liệu cũ. Booking tạo/cập nhật bảng của nó khi khởi động.
+
+~~~powershell
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail 30 identity-service booking-service matching_worker
+~~~
+
+Mở **http://localhost**. Nếu chưa kết nối được, kiểm tra trạng thái và log trước khi thử lại.
+
+Không cần chạy data_seed.py để demo. Script seed có thao tác DROP bảng; không dùng trên dữ liệu cần giữ. Tài khoản seed thiếu PasswordHash không đăng nhập được; hãy đăng ký tài khoản mới qua giao diện.
+
+## 5. Demo một chuyến hoàn chỉnh
+
+### 5.1. Tạo tài khoản hành khách và tài xế
+
+1. Mở http://localhost trong trình duyệt thường.
+2. Chọn Chưa có tài khoản? Đăng ký.
+3. Nhập số điện thoại/email chưa sử dụng, mật khẩu ít nhất 8 ký tự, chọn Hành khách rồi nhấn Tạo tài khoản.
+4. Mở cửa sổ ẩn danh hoặc trình duyệt khác, đăng ký tài khoản thứ hai với vai trò Tài xế.
+
+Không dùng hai tab cùng phiên trình duyệt để đăng nhập hai vai trò vì token được lưu chung trong localStorage. Tài khoản chỉ xem được các chuyến thuộc quyền của mình.
+
+### 5.2. Tài xế gửi vị trí
+
+| Trường | Giá trị minh họa |
+|---|---|
+| Vĩ độ tài xế | 21.0285 |
+| Kinh độ tài xế | 105.8542 |
+
+Nhấn Gửi vị trí. Đợi thông báo đã gửi và trạng thái Đang chờ chuyến mới.
+
+Hoặc nhấn Lấy vị trí thiết bị, cấp quyền GPS, kiểm tra tọa độ rồi nhấn Gửi vị trí. Nút GPS chỉ điền form, không tự gửi. GPS trình duyệt cần localhost hoặc HTTPS; nếu không cấp quyền thì nhập thủ công.
+
+Nhập số thập phân theo ví dụ, không dùng dấu phân cách hàng nghìn. Trình duyệt có thể hiển thị dấu phẩy thay dấu chấm theo thiết lập vùng.
+
+### 5.3. Hành khách đặt xe
+
+| Trường | Giá trị minh họa |
+|---|---|
+| Điểm đón Vĩ độ | 21.0285 |
+| Điểm đón Kinh độ | 105.8542 |
+| Điểm đến Vĩ độ | 21.0385 |
+| Điểm đến Kinh độ | 105.8642 |
+
+Nhấn Đặt xe một lần. Đợi Đang tìm tài xế chuyển thành Đã có tài xế. Kiểm tra cùng mã chuyến trên hai giao diện.
+
+Nếu nhiều tài xế khác cũng AVAILABLE ở gần, Matching có thể chọn tài xế khác. Để demo đúng hai tài khoản, dùng tọa độ khu vực chưa có tài xế khác và đặt điểm đón gần vị trí tài xế vừa gửi.
+
+### 5.4. Bắt đầu và hoàn thành
+
+1. Tài xế nhấn Bắt đầu chuyến rồi Xác nhận.
+2. Hai bên thấy Đang di chuyển.
+3. Tài xế nhấn Hoàn thành chuyến rồi Xác nhận.
+4. Hành khách thấy Đã hoàn thành, cước và Đã thanh toán (giả lập).
+5. Tài xế trở về chờ khi backend xử lý xong sự kiện. Xem hóa đơn trong Lịch sử.
+
+Tổng cước tài xế là tổng fareAmount của các chuyến COMPLETED; không phải tiền chuyển vào ví và không chỉ tính hôm nay.
+
+## 6. Hủy chuyến và chạy chuyến tiếp theo
+
+### Hủy chuyến
+
+Hành khách chọn chuyến đang hoạt động, nhấn Hủy chuyến rồi Xác nhận hủy. Đợi backend xác nhận Đã hủy. Tài xế không còn nút bắt đầu/hoàn thành và quay về chờ. Chuyến đã hoàn thành không hủy được.
+
+### Hai chuyến liên tiếp với cùng tài xế
+
+1. Hoàn thành chuyến thứ nhất.
+2. Đợi tài xế hiển thị Đang chờ chuyến mới.
+3. Nếu đang xem hóa đơn cũ, nhấn Quay về chờ chuyến.
+4. Hành khách đặt chuyến mới gần vị trí tài xế đã gửi.
+5. Kiểm tra mã chuyến mới và tài xế được gán, rồi bắt đầu/hoàn thành tiếp.
+
+Không cần đăng ký lại hoặc reset tài xế. Khi tài xế thực sự di chuyển, cần gửi lại vị trí: hệ thống chưa tự cập nhật GPS nền hoặc tự chuyển tọa độ tài xế tới điểm đến.
+
+## 7. Trạng thái và dữ liệu thật/giả lập
+
+| Trạng thái chuyến | Hiển thị/ý nghĩa |
+|---|---|
+| PENDING | Đang tìm tài xế |
+| ACCEPTED | Đã có tài xế |
+| STARTED | Đang di chuyển |
+| COMPLETED | Đã hoàn thành |
+| CANCELED | Đã hủy, do người dùng hoặc ghép thất bại |
+
+| Trạng thái tài xế | Ý nghĩa |
+|---|---|
+| AVAILABLE | Có thể nhận chuyến |
+| BUSY | Đang được giữ cho một chuyến |
+| OFFLINE | Không nhận chuyến; API đọc cũng dùng trạng thái này khi chưa có vị trí |
+
+| Dữ liệu | Nguồn và giới hạn |
+|---|---|
+| Tài khoản, chuyến, lịch sử, trạng thái | API thật, lưu SQL Server/MongoDB |
+| Ghép xe và sự kiện kết thúc | Booking/Matching trao đổi Kafka thật |
+| Tọa độ trong tài liệu | Ví dụ nhập tay, không phải GPS thật |
+| Vị trí thiết bị | GPS trình duyệt; lưu khi nhấn Gửi vị trí |
+| Cước | Backend tính: 15.000 đồng mở cửa + 10.000 đồng/km theo Haversine đường chim bay |
+| ETA | Ước lượng, không có dữ liệu giao thông thực tế |
+| PAID_SIMULATED | Thanh toán giả lập; không trừ tiền, không gọi cổng thanh toán |
+| Seed và dữ liệu test cũ | Tổng hợp phục vụ demo, có thể còn trong database local |
+
+FE cập nhật bằng polling: khoảng 2 giây khi có chuyến hoạt động, 5 giây khi tài xế chờ và 15 giây khi hành khách không có chuyến. Trạng thái nhận chuyến của tài xế được đọc riêng khoảng 2 giây. Tab ẩn tạm dừng tải và đọc lại khi được mở.
+
+Matching gắn active_trip_id để chỉ giải phóng đúng chuyến, có đối soát Booking mỗi 15 giây cho reservation có mã chuyến. BUSY legacy không có mã chuyến cần kiểm tra riêng, không mở khóa hàng loạt.
+
+## 8. Địa chỉ truy cập và API
+
+| Thành phần | Địa chỉ trên máy Docker |
+|---|---|
+| Web | http://localhost |
+| Gateway | http://localhost:3000 |
+| Identity nội bộ | http://127.0.0.1:3001 |
+| Booking nội bộ | http://127.0.0.1:8080 |
+| Location nội bộ | http://127.0.0.1:8000 |
+| SQL Server | localhost,14333 |
+| MongoDB | localhost:27017 |
+| Kafka | localhost:9092 |
+| Zookeeper | localhost:2181 |
+
+Người dùng đi qua Web/Gateway. Booking và Location chưa tự kiểm tra JWT; cổng nội bộ dành cho phát triển trên máy. Compose phục vụ demo local, chưa phải cấu hình triển khai Internet; database/broker vẫn publish cổng trên host.
+
+| Chức năng | API qua Gateway |
+|---|---|
+| Đăng ký/đăng nhập | POST /api/auth/register, POST /api/auth/login |
+| Tài khoản hiện tại | GET /api/auth/me |
+| Danh sách/tạo chuyến | GET /api/trips, POST /api/trips |
+| Chi tiết | GET /api/trips/{id} |
+| Bắt đầu/hoàn thành/hủy | PUT /api/trips/{id}/start, /complete, /cancel |
+| Gửi vị trí | POST /api/location |
+| Trạng thái tài xế hiện tại | GET /api/location/me |
+
+API nghiệp vụ yêu cầu Bearer token. /api/orders là alias của /api/trips. Người dùng không cần gọi các API này trực tiếp để demo.
+
+## 9. Vận hành thường ngày
+
+Chạy lại:
+
+~~~powershell
+docker compose up -d
+docker compose ps
+~~~
+
+Sau khi khởi động Docker, kiểm tra Kafka sẵn sàng theo mục 4 trước khi demo.
+
+Xem log:
+
+~~~powershell
+docker compose logs --tail 80 api-gateway identity-service
+docker compose logs --tail 80 booking-service matching_worker location_service
+~~~
+
+Tạm dừng, giữ container và dữ liệu:
+
+~~~powershell
+docker compose stop
+~~~
+
+Gỡ container/network, giữ named volumes:
+
+~~~powershell
+docker compose down
+~~~
+
+Không thêm -v nếu muốn giữ tài khoản/chuyến: tùy chọn này xóa volumes SQL/Mongo. Kafka/Zookeeper hiện chưa khai báo named volumes trong Compose, vì vậy không coi down/recreate là cơ chế bảo toàn lịch sử sự kiện; ưu tiên stop khi chỉ tạm dừng demo.
+
+Sau khi cập nhật mã, build lại dịch vụ thay đổi:
+
+~~~powershell
+docker compose up -d --build --no-deps frontend api-gateway
+~~~
+
+## 10. Xử lý lỗi thường gặp
+
+| Hiện tượng | Hướng xử lý |
+|---|---|
+| Không kết nối Docker engine | Mở Docker Desktop, dùng Linux containers, đợi docker version có Server |
+| Thiếu JWT_SECRET | Điền secret ít nhất 32 byte trong .env gốc |
+| db:init lỗi | Kiểm tra SQL sẵn sàng, mật khẩu, volume cũ; sửa cấu hình rồi chạy lại |
+| Không mở được Web | Kiểm tra docker compose ps, port 80 và frontend |
+| Đăng ký trùng | Dùng email/số điện thoại khác; API trả 409 |
+| Seed không đăng nhập được | Tạo tài khoản mới qua UI; seed có thể thiếu PasswordHash |
+| 401 / phiên hết hạn | Đăng nhập lại; đổi JWT_SECRET làm token cũ mất hiệu lực |
+| Tìm xe mãi không xong | Xem log Booking/Matching/Kafka, xác nhận tài xế AVAILABLE và gần điểm đón |
+| Không có tài xế, chuyến bị hủy | Gửi vị trí tài xế khả dụng gần điểm đón rồi tạo chuyến mới |
+| BUSY sau khi kết thúc | Đợi event/đối soát, xem log Matching; không ép status trong MongoDB |
+| GPS không hoạt động | Dùng localhost/HTTPS, cấp quyền hoặc nhập tọa độ thủ công |
+| Báo lỗi sau Đặt xe | Tải lại danh sách để xác định chuyến đã tạo chưa; không bấm lặp liên tục |
+| Không nhận pwsh / SkipHttpErrorCheck | Các bước tài liệu này không cần hai lệnh/tùy chọn đó |
+| npm audit cảnh báo | Không tự dùng npm audit fix --force; kiểm tra ảnh hưởng major version trước |
+
+Nếu Kafka đã sẵn sàng nhưng consumer chưa xử lý sau khi khởi động Docker, xem log rồi khởi động lại:
+
+~~~powershell
+docker compose restart matching_worker analytics_worker
+docker compose logs --tail 40 matching_worker
+~~~
+
+Với BUSY legacy không có active_trip_id, người quản trị cần kiểm tra Booking và dùng repair_driver.py theo bản kỹ thuật. Không áp dụng cho tài xế đang có chuyến hoạt động.
+
+## 11. Phát triển và kiểm tra bản bàn giao
+
+Chạy Frontend ngoài Docker, backend vẫn phải hoạt động:
+
+~~~powershell
+Set-Location frontend
+npm ci
+npm run dev
+~~~
+
+Mở URL Vite in trong terminal. VITE_API_GATEWAY_URL tùy chọn trỏ tới Gateway; mặc định dùng hostname của Web và cổng 3000. Khi build Docker với URL riêng, truyền build argument VITE_API_GATEWAY_URL.
+
+Kiểm tra:
+
+~~~powershell
+npm run lint
+npm run build
+~~~
+
+Bộ test, ảnh/log test và công cụ mô phỏng chỉ giữ tại máy phát triển, không có trong cây mã bàn giao. Không chạy npm test trên bản clone nếu chưa được cung cấp bộ test riêng.
+
+Tài liệu mô tả code đã commit trên nhánh Tùng. Bản vá dependency hoặc thử nghiệm chưa commit ở máy cá nhân không được coi là đã bàn giao.
+
+## 12. Giới hạn hiện tại
+
+- Chưa có bản đồ/lộ trình giao thông, GPS nền hoặc thanh toán thật.
+- Chưa có nút nhận/từ chối chuyến riêng, online/offline trên FE hoặc hồ sơ xe đầy đủ.
+- Endpoint AVAILABLE/OFFLINE chỉ dùng nội bộ và từ chối sửa tài xế BUSY/có reservation.
+- Chưa bảo đảm exactly-once xuyên MongoDB/Kafka hoặc chống đặt trùng từ mọi tab/client.
+- Tổng cước/ETA/khoảng cách phục vụ demo; không phải báo cáo doanh thu thực tế.
+
+## 13. Cấu trúc dự án và tài liệu
+
+~~~text
+frontend/                    Giao diện hành khách và tài xế
+api-gateway/                 Phân quyền và chuyển tiếp API
+identity-service/            Đăng ký, đăng nhập, schema Identity
+booking_service/             Vòng đời chuyến, Saga, tính cước
+matching_location_service/   Location, Matching, giải phóng tài xế
+analytics_service/           Thu thập sự kiện vào MongoDB
+data_seed.py                 Seed minh họa, có thể xóa dữ liệu cũ
+docker-compose.yml           Hạ tầng và ứng dụng
+README.md                    Hướng dẫn chính, nội dung giống README_USER.md
+README_USER.md               Hướng dẫn người dùng
+docs/TECHNICAL_HANDOVER.md    README kỹ thuật trước đây, giữ nguyên nội dung
+~~~
+
+Xem thêm [chi tiết Frontend](frontend/README.md) và [bàn giao kỹ thuật](docs/TECHNICAL_HANDOVER.md).
