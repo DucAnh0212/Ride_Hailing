@@ -356,6 +356,7 @@ identity-service/            Đăng ký, đăng nhập, schema Identity
 booking_service/             Vòng đời chuyến, Saga, tính cước
 matching_location_service/   Location, Matching, giải phóng tài xế
 analytics_service/           Thu thập sự kiện vào MongoDB
+data_mining/                 Khai phá dữ liệu và phân tích mô hình
 data_seed.py                 Seed minh họa, có thể xóa dữ liệu cũ
 docker-compose.yml           Hạ tầng và ứng dụng
 README.md                    Hướng dẫn chính (cài đặt và sử dụng)
