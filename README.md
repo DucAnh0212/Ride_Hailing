@@ -2,8 +2,6 @@
 
 Hệ thống đặt xe phân tán cho hành khách và tài xế. Tài liệu này dành cho người chạy demo và thành viên tiếp nhận mã nguồn trên nhánh **Tùng**.
 
-Bản README kỹ thuật trước đây được giữ nguyên tại [docs/TECHNICAL_HANDOVER.md](docs/TECHNICAL_HANDOVER.md).
-
 ## 1. Chức năng và công nghệ
 
 Hành khách đăng ký, đăng nhập, đặt xe bằng tọa độ, theo dõi và hủy chuyến. Tài xế gửi vị trí, xem chuyến được giao, bắt đầu và hoàn thành chuyến. Sau khi kết thúc hoặc hủy, tài xế quay về trạng thái chờ; hóa đơn và lịch sử vẫn được lưu.
