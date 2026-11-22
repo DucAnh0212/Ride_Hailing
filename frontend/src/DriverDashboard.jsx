@@ -104,11 +104,11 @@ export default function DriverDashboard({ user }) {
     setConfirm(null);
   }
 
-  const confirmValid = confirm?.id === trip?.tripId && (
+  const confirmValid = Boolean(confirm && trip && confirm.id === trip.tripId && (
     ((confirm.kind === 'accept' || confirm.kind === 'reject') && trip.status === 'MATCHED') ||
     (confirm.kind === 'start' && trip.status === 'ACCEPTED') ||
     (confirm.kind === 'complete' && trip.status === 'STARTED')
-  );
+  ));
 
   return <>
     <div className="sync-bar"><span>{model.loading ? 'Đang tải chuyến…' : model.updatedAt ? `Cập nhật lúc ${model.updatedAt.toLocaleTimeString('vi-VN')}` : 'Chưa tải được chuyến'}</span>

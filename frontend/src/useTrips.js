@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
-export const isActive = trip => ['PENDING', 'MATCHED', 'ACCEPTED', 'STARTED'].includes(trip.status);
+export const isActive = trip => ['PENDING', 'MATCHED', 'ACCEPTED', 'STARTED'].includes(trip?.status);
 export const tripLabels = {
   PENDING: 'Đang tìm tài xế',
   MATCHED: 'Chờ tài xế xác nhận',
