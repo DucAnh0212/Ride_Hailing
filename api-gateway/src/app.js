@@ -1,19 +1,20 @@
 const express = require('express');
 const cors = require('cors');
-const morgan = require('morgan');
 const jwt = require('jsonwebtoken');
 const { randomUUID } = require('node:crypto');
-
 
 function createApp({ secret, identityUrl, bookingUrl, locationUrl, timeoutMs = 5000 }) {
     const app = express();
     app.use(cors());
-    app.use(morgan('dev'));
     app.use(express.json({ limit: '16kb' }));
     app.use((req, res, next) => {
         const supplied = req.headers['x-correlation-id'];
         req.correlationId = typeof supplied === 'string' && /^[\w.-]{1,100}$/.test(supplied) ? supplied : randomUUID();
         res.set('X-Correlation-ID', req.correlationId);
+        const started = Date.now();
+        res.on('finish', () => {
+            console.log(`${new Date().toISOString()} | NODE: API-Gateway | CID=${req.correlationId} | ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - started}ms)`);
+        });
         next();
     });
     const upstream = async (req, base, path, method = 'GET', body) => {
@@ -77,7 +78,7 @@ function createApp({ secret, identityUrl, bookingUrl, locationUrl, timeoutMs = 5
                 }
                 return send(res, result);
             }
-            const match = /^\/([A-Za-z0-9_-]+)(?:\/(start|complete|cancel))?$/.exec(path);
+            const match = /^\/([A-Za-z0-9_-]+)(?:\/(accept|reject|start|complete|cancel))?$/.exec(path);
             if (!match || !((!match[2] && req.method === 'GET') || (match[2] && req.method === 'PUT'))) {
                 return res.status(404).json({ message: 'API không tồn tại' });
             }
@@ -86,17 +87,25 @@ function createApp({ secret, identityUrl, bookingUrl, locationUrl, timeoutMs = 5
             if (trip.status !== 200) return send(res, trip);
             if (!belongs(trip.data)) return denied(res);
             if (!match[2]) return send(res, trip);
-            if (['start', 'complete'].includes(match[2]) && isRider) return denied(res);
+            if (['accept', 'reject', 'start', 'complete'].includes(match[2]) && isRider) return denied(res);
             return send(res, await upstream(req, bookingUrl, tripPath + '/' + match[2], 'PUT', req.body));
         } catch (error) { return fail(res, error); }
     });
     app.use('/api/location', authenticated, async (req, res) => {
         if (req.user.role !== 'Driver') return denied(res);
-        if (req.method === 'GET' && req.path === '/me') {
+        const path = req.path.replace(/\/$/, '') || '/';
+        if (req.method === 'GET' && path === '/me') {
             try { return send(res, await upstream(req, locationUrl, '/api/location/' + Number(req.user.id))); }
             catch (error) { return fail(res, error); }
         }
-        if (req.method !== 'POST' || !['/', ''].includes(req.path)) return res.sendStatus(404);
+        if (req.method === 'PUT' && path === '/status') {
+            if (req.body?.driver_id !== undefined && String(req.body.driver_id) !== String(req.user.id)) return denied(res);
+            try {
+                return send(res, await upstream(req, locationUrl, '/api/location/status', 'PUT',
+                    { driver_id: Number(req.user.id), status: req.body?.status }));
+            } catch (error) { return fail(res, error); }
+        }
+        if (req.method !== 'POST' || path !== '/') return res.sendStatus(404);
         if (req.body?.driver_id !== undefined && String(req.body.driver_id) !== String(req.user.id)) return denied(res);
         try { return send(res, await upstream(req, locationUrl, '/api/location', 'POST', { ...req.body, driver_id: Number(req.user.id) })); }
         catch (error) { return fail(res, error); }

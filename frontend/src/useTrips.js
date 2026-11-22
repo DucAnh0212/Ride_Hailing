@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
-export const isActive = trip => ['PENDING', 'ACCEPTED', 'STARTED'].includes(trip.status);
-export const tripLabels = { PENDING: 'Đang tìm tài xế', ACCEPTED: 'Đã có tài xế', STARTED: 'Đang di chuyển', COMPLETED: 'Đã hoàn thành', CANCELED: 'Đã hủy' };
+export const isActive = trip => ['PENDING', 'MATCHED', 'ACCEPTED', 'STARTED'].includes(trip?.status);
+export const tripLabels = {
+  PENDING: 'Đang tìm tài xế',
+  MATCHED: 'Chờ tài xế xác nhận',
+  ACCEPTED: 'Đã có tài xế nhận chuyến',
+  STARTED: 'Đang di chuyển',
+  COMPLETED: 'Đã hoàn thành',
+  CANCELED: 'Đã hủy',
+};
 export function useTrips(userId, role = 'Rider') {
   const [trips, setTrips] = useState([]), [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState(''), [actionError, setActionError] = useState('');
@@ -16,7 +23,7 @@ export function useTrips(userId, role = 'Rider') {
     if (value) sessionStorage.setItem(key, '1'); else sessionStorage.removeItem(key);
     setUncertain(value);
   }
-  function accept(data) {
+  function acceptSnapshot(data) {
     const sorted = data.filter(owned).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     if (snapshot.current) {
       const changes = sorted.filter(t => snapshot.current.get(t.tripId) !== t.status);
@@ -32,14 +39,14 @@ export function useTrips(userId, role = 'Rider') {
       const data = await api('/api/trips', { signal });
       if (!Array.isArray(data)) throw new Error('Danh sách chuyến không hợp lệ');
       if (!mounted.current || version !== epoch.current) return;
-      accept(data); setSyncError(''); setLoading(false);
+      acceptSnapshot(data); setSyncError(''); setLoading(false);
     } catch (error) {
       if (mounted.current && !signal?.aborted && version === epoch.current) { setSyncError(error.message); setLoading(false); }
     }
   }
   function invalidate() { ++epoch.current; }
   function pollDelay() {
-    return snapshot.current && [...snapshot.current.values()].some(s => ['PENDING', 'ACCEPTED', 'STARTED'].includes(s)) ? 2000 : driver ? 5000 : 15000;
+    return snapshot.current && [...snapshot.current.values()].some(s => ['PENDING', 'MATCHED', 'ACCEPTED', 'STARTED'].includes(s)) ? 2000 : driver ? 5000 : 15000;
   }
   useEffect(() => {
     mounted.current = true;
@@ -95,6 +102,8 @@ export function useTrips(userId, role = 'Rider') {
   return { trips, loading, busy, uncertain, syncError, actionError, updatedAt, notice, inspect,
     dismissNotice: () => setNotice(''), refresh: () => refresh(), acknowledge: () => { markUncertain(false); setActionError(''); },
     create: body => mutate('/api/trips', { ...body, passengerId: String(userId) }, true),
+    accept: id => mutate(`/api/trips/${encodeURIComponent(id)}/accept`, undefined, false),
+    reject: id => mutate(`/api/trips/${encodeURIComponent(id)}/reject`, { reason: 'DRIVER_REJECTED' }, false),
     cancel: id => mutate(`/api/trips/${encodeURIComponent(id)}/cancel`, { reason: 'PASSENGER_CANCELED' }, false),
     start: id => mutate(`/api/trips/${encodeURIComponent(id)}/start`, undefined, false),
     complete: id => mutate(`/api/trips/${encodeURIComponent(id)}/complete`, undefined, false) };

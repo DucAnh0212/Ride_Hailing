@@ -1,4 +1,3 @@
-// Additive initialization: preserve existing numeric IDs, roles and all data.
 async function initializeSchema(pool) {
     await pool.request().query(`
         IF OBJECT_ID('dbo.Users', 'U') IS NULL

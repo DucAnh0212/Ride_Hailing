@@ -1,130 +1,55 @@
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.7.1
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-
-  kafka:
-    image: confluentinc/cp-kafka:7.7.1
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    ports:
-      - "14333:1433"
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${SQL_SERVER_PASSWORD:-RideAdmin#2026}
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-
-  mongodb:
-    image: mongo:latest
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-
-  booking-service:
-    build: ./booking_service
-    container_name: ride-hailing-booking
-    ports:
-      - "127.0.0.1:8080:8080"
-    environment:
-      - DB_URL=jdbc:sqlserver://sqlserver:1433;databaseName=RideHailingDB;encrypt=true;trustServerCertificate=true
-      - DB_USERNAME=sa
-      - DB_PASSWORD=${SQL_SERVER_PASSWORD:-RideAdmin#2026}
-      - KAFKA_BROKER=kafka:29092
-    depends_on:
-      - sqlserver
-      - kafka
-    restart: unless-stopped
-
-  location_service:
-    build: ./matching_location_service
-    container_name: ride_hailing_location_api
-    ports:
-      - "127.0.0.1:8000:8000"
-    environment:
-      - MONGO_URI=mongodb://mongodb:27017/
-      - KAFKA_BROKER=kafka:29092
-    depends_on:
-      - mongodb
-      - kafka
-    restart: unless-stopped
-      
-  matching_worker:
-    build: ./matching_location_service
-    container_name: ride_hailing_matching_worker
-    command: ["python", "geo_matcher.py"]
-    environment:
-      - BOOKING_SERVICE_URL=http://booking-service:8080
-      - MONGO_URI=mongodb://mongodb:27017/
-      - KAFKA_BROKER=kafka:29092
-    depends_on:
-      - mongodb
-      - kafka 
-    restart: unless-stopped
-
-  analytics_worker:
-    build: ./analytics_service
-    container_name: ride_hailing_analytics_worker
-    environment:
-      - KAFKA_BROKER=kafka:29092
-      - MONGO_URI=mongodb://mongodb:27017/
-    depends_on:
-      - kafka
-      - mongodb
-    restart: unless-stopped
-
   identity-service:
     build: ./identity-service
-    container_name: ride_hailing_identity
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${IDENTITY_PORT:-3101}:3001"
     environment:
-      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env (at least 32 bytes)}
-      - DB_PORT=1433
-      - DB_SERVER=sqlserver
-      - DB_PASSWORD=${SQL_SERVER_PASSWORD:-RideAdmin#2026}
-    depends_on:
-      - sqlserver
+      PORT: 3001
+      DB_SERVER: ${DB_SERVER:-sqlserver}
+      DB_PORT: ${DB_PORT:-1433}
+      DB_USER: ${DB_USER:-sa}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:-IdentityDB}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (at least 32 bytes)}
+    networks:
+      default:
+        aliases:
+          - tungnv-identity
+      backend:
     restart: unless-stopped
 
   api-gateway:
     build: ./api-gateway
-    container_name: ride_hailing_api_gateway
     ports:
-      - "3000:3000"
+      - "${GATEWAY_PORT:-3100}:3000"
     environment:
-      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env (at least 32 bytes)}
-      - IDENTITY_SERVICE_URL=http://identity-service:3001
-      - BOOKING_SERVICE_URL=http://booking-service:8080
-      - LOCATION_SERVICE_URL=http://location_service:8000
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (at least 32 bytes)}
+      IDENTITY_SERVICE_URL: http://tungnv-identity:3001
+      BOOKING_SERVICE_URL: ${BOOKING_SERVICE_URL:-http://booking-service:8080}
+      LOCATION_SERVICE_URL: ${LOCATION_SERVICE_URL:-http://location_service:8000}
     depends_on:
       - identity-service
-      - booking-service
+    networks:
+      - default
+      - backend
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
-    container_name: ride_hailing_frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_GATEWAY_URL: ${VITE_API_GATEWAY_URL:-http://localhost:3100}
     ports:
-      - "80:80"
+      - "${FRONTEND_PORT:-8088}:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - default
+    restart: unless-stopped
 
-volumes:
-  sqlserver_data:
-  mongodb_data:
+networks:
+  backend:
+    external: true
+    name: ${BACKEND_NETWORK:-ride_hailing_main_default}
+

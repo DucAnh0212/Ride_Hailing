@@ -16,7 +16,7 @@ export async function api(path, { method = 'GET', body, signal, authenticated = 
     if (response.status === 401 && token && localStorage.getItem('token') === token) {
       localStorage.removeItem('token'); window.dispatchEvent(new Event('session-expired'));
     }
-    if (!response.ok) throw new ApiError(data?.message || `Yêu cầu thất bại (${response.status})`, response.status);
+    if (!response.ok) throw new ApiError(data?.message || (typeof data?.detail === 'string' ? data.detail : null) || `Yêu cầu thất bại (${response.status})`, response.status);
     if (data === null) throw new ApiError('Phản hồi máy chủ không hợp lệ');
     return data;
   } catch (error) {
