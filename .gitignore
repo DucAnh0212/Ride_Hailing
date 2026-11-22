@@ -1,28 +1,16 @@
 venv/
 node_modules/
 __pycache__/
+*.pyc
 .env
-
-dist/
-coverage/
 .env.*
 !.env.example
 
-# Local verification only; not part of the delivery
-test/
-tests/
+dist/
+target/
+coverage/
 test-results/
 playwright-report/
-*.test.*
-*.spec.*
-test_*.py
-test_*.ps1
-playwright.config.*
-/check_db.py
-/matching_location_service/mock_trip.py
-/matching_location_service/driver_simulator.py
-/docs/driver-wait-fix-20261117/
-/.vscode/
-target/
+.vscode/
 *.log
-test_*
+graphify-out/

@@ -1,7 +1,9 @@
 package com.uber.booking.services;
 
+import com.uber.booking.events.TripAcceptedEvent;
 import com.uber.booking.events.TripCancelledEvent;
 import com.uber.booking.events.TripCompletedEvent;
+import com.uber.booking.events.TripRejectedEvent;
 import com.uber.booking.events.TripRequestedEvent;
 import com.uber.booking.events.TripStartedEvent;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +18,8 @@ public class KafkaProducerService {
     private static final Logger LOGGER = Logger.getLogger(KafkaProducerService.class.getName());
 
     public static final String TOPIC_TRIP_REQUESTED = "trip.requested";
+    public static final String TOPIC_TRIP_ACCEPTED = "trip.accepted";
+    public static final String TOPIC_TRIP_REJECTED = "trip.rejected";
     public static final String TOPIC_TRIP_STARTED = "trip.started";
     public static final String TOPIC_TRIP_COMPLETED = "trip.completed";
     public static final String TOPIC_TRIP_CANCELLED = "trip.cancelled";
@@ -26,6 +30,16 @@ public class KafkaProducerService {
     public void sendTripRequestedEvent(TripRequestedEvent event) {
         LOGGER.info(String.format("Sending %s event for trip: %s", TOPIC_TRIP_REQUESTED, event.getPayload().getTrip_id()));
         kafkaTemplate.send(TOPIC_TRIP_REQUESTED, event.getMetadata().getCorrelation_id(), event);
+    }
+
+    public void sendTripAcceptedEvent(TripAcceptedEvent event) {
+        LOGGER.info(String.format("Sending %s event for trip: %s", TOPIC_TRIP_ACCEPTED, event.getPayload().getTrip_id()));
+        kafkaTemplate.send(TOPIC_TRIP_ACCEPTED, event.getMetadata().getCorrelation_id(), event);
+    }
+
+    public void sendTripRejectedEvent(TripRejectedEvent event) {
+        LOGGER.info(String.format("Sending %s event for trip: %s", TOPIC_TRIP_REJECTED, event.getPayload().getTrip_id()));
+        kafkaTemplate.send(TOPIC_TRIP_REJECTED, event.getMetadata().getCorrelation_id(), event);
     }
 
     public void sendTripStartedEvent(TripStartedEvent event) {

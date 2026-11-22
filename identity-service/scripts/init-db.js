@@ -2,7 +2,7 @@ require('dotenv').config();
 const sql = require('mssql');
 const { initializeSchema } = require('../src/config/schema');
 async function main() {
-    const database = process.env.DB_NAME || 'RideHailingDB';
+    const database = process.env.DB_NAME || 'IdentityDB';
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(database)) throw new Error('Invalid DB_NAME');
     const config = { user: process.env.DB_USER || 'sa', password: process.env.DB_PASSWORD,
         server: process.env.DB_SERVER || 'localhost', port: Number(process.env.DB_PORT || 14333),

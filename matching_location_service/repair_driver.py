@@ -1,4 +1,3 @@
-"""Explicit, audited repair of one pre-fix BUSY driver. Stop Matching before --apply."""
 import argparse
 import os
 import uuid
@@ -40,6 +39,6 @@ if __name__ == '__main__':
     response.raise_for_status()
     client = MongoClient(os.getenv('MONGO_URI', 'mongodb://localhost:27017/'))
     try:
-        print(json_util.dumps(repair(client['RideHailingDB'], response.json(), args.driver_id, args.expected_trip, args.apply), indent=2))
+        print(json_util.dumps(repair(client[os.getenv('MONGO_DB', 'LocationDB')], response.json(), args.driver_id, args.expected_trip, args.apply), indent=2))
     finally:
         client.close()

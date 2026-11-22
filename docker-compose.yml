@@ -27,7 +27,7 @@ services:
       - "14333:1433"
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${SQL_SERVER_PASSWORD:-RideAdmin#2026}
+      MSSQL_SA_PASSWORD: ${SQL_SERVER_PASSWORD:?Set SQL_SERVER_PASSWORD in the root .env}
     volumes:
       - sqlserver_data:/var/opt/mssql
 
@@ -37,6 +37,11 @@ services:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   booking-service:
     build: ./booking_service
@@ -44,13 +49,18 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      - DB_URL=jdbc:sqlserver://sqlserver:1433;databaseName=RideHailingDB;encrypt=true;trustServerCertificate=true
+      - DB_URL=jdbc:sqlserver://sqlserver:1433;databaseName=BookingDB;encrypt=true;trustServerCertificate=true
       - DB_USERNAME=sa
-      - DB_PASSWORD=${SQL_SERVER_PASSWORD:-RideAdmin#2026}
+      - DB_PASSWORD=${SQL_SERVER_PASSWORD:?Set SQL_SERVER_PASSWORD in the root .env}
       - KAFKA_BROKER=kafka:29092
     depends_on:
       - sqlserver
       - kafka
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   location_service:
@@ -60,23 +70,32 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       - MONGO_URI=mongodb://mongodb:27017/
+      - MONGO_DB=LocationDB
       - KAFKA_BROKER=kafka:29092
     depends_on:
       - mongodb
       - kafka
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
-      
+
   matching_worker:
     build: ./matching_location_service
     container_name: ride_hailing_matching_worker
     command: ["python", "geo_matcher.py"]
     environment:
       - BOOKING_SERVICE_URL=http://booking-service:8080
+      - LOCATION_SERVICE_URL=http://location_service:8000
       - MONGO_URI=mongodb://mongodb:27017/
+      - MONGO_DB=MatchingDB
       - KAFKA_BROKER=kafka:29092
     depends_on:
       - mongodb
-      - kafka 
+      - kafka
+      - location_service
     restart: unless-stopped
 
   analytics_worker:
@@ -85,6 +104,7 @@ services:
     environment:
       - KAFKA_BROKER=kafka:29092
       - MONGO_URI=mongodb://mongodb:27017/
+      - MONGO_DB=DataWarehouseDB
     depends_on:
       - kafka
       - mongodb
@@ -99,9 +119,15 @@ services:
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env (at least 32 bytes)}
       - DB_PORT=1433
       - DB_SERVER=sqlserver
-      - DB_PASSWORD=${SQL_SERVER_PASSWORD:-RideAdmin#2026}
+      - DB_NAME=IdentityDB
+      - DB_PASSWORD=${SQL_SERVER_PASSWORD:?Set SQL_SERVER_PASSWORD in the root .env}
     depends_on:
       - sqlserver
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/auth/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   api-gateway:
@@ -117,6 +143,12 @@ services:
     depends_on:
       - identity-service
       - booking-service
+      - location_service
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   frontend:
@@ -124,6 +156,9 @@ services:
     container_name: ride_hailing_frontend
     ports:
       - "80:80"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
 
 volumes:
   sqlserver_data:

@@ -1,8 +1,10 @@
 package com.uber.booking.config;
 
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -15,6 +17,30 @@ import java.util.logging.Logger;
 public class KafkaConsumerConfig {
 
     private static final Logger LOGGER = Logger.getLogger(KafkaConsumerConfig.class.getName());
+
+    @Bean
+    public NewTopic tripRequestedTopic() { return TopicBuilder.name("trip.requested").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic driverMatchedTopic() { return TopicBuilder.name("driver.matched").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic matchingFailedTopic() { return TopicBuilder.name("matching.failed").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic tripAcceptedTopic() { return TopicBuilder.name("trip.accepted").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic tripRejectedTopic() { return TopicBuilder.name("trip.rejected").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic tripStartedTopic() { return TopicBuilder.name("trip.started").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic tripCompletedTopic() { return TopicBuilder.name("trip.completed").partitions(1).replicas(1).build(); }
+
+    @Bean
+    public NewTopic tripCancelledTopic() { return TopicBuilder.name("trip.cancelled").partitions(1).replicas(1).build(); }
 
     @Bean
     public CommonErrorHandler errorHandler(KafkaOperations<Object, Object> template) {

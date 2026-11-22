@@ -50,17 +50,17 @@ public class KafkaConsumerService {
 
         LOGGER.info("Processing DriverMatchedEvent for trip: " + event.getPayload().getTrip_id());
 
-        // 2. Cập nhật trạng thái chuyến đi sang ACCEPTED
+        // 2. Cập nhật trạng thái chuyến đi sang MATCHED (chờ tài xế chấp nhận hoặc từ chối)
         String tripId = event.getPayload().getTrip_id();
         Optional<Trip> optionalTrip = tripRepository.findById(tripId);
         
         if (optionalTrip.isPresent()) {
             Trip trip = optionalTrip.get();
             if ("PENDING".equals(trip.getStatus())) {
-                trip.setStatus("ACCEPTED");
+                trip.setStatus("MATCHED");
                 trip.setDriverId(event.getPayload().getDriver_id());
                 tripRepository.save(trip);
-                LOGGER.info("Trip " + tripId + " updated to ACCEPTED.");
+                LOGGER.info("Trip " + tripId + " updated to MATCHED (driver=" + trip.getDriverId() + ", awaiting acceptance).");
             }
         } else {
             LOGGER.warning("Trip not found: " + tripId);

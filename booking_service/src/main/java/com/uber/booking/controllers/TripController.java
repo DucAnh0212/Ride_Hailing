@@ -2,8 +2,10 @@ package com.uber.booking.controllers;
 
 import com.uber.booking.dto.TripCancelDTO;
 import com.uber.booking.dto.TripRequestDTO;
+import com.uber.booking.events.TripAcceptedEvent;
 import com.uber.booking.events.TripCancelledEvent;
 import com.uber.booking.events.TripCompletedEvent;
+import com.uber.booking.events.TripRejectedEvent;
 import com.uber.booking.events.TripRequestedEvent;
 import com.uber.booking.events.TripStartedEvent;
 import com.uber.booking.models.Trip;
@@ -35,6 +37,11 @@ public class TripController {
     @Autowired
     private FareCalculationService fareCalculationService;
 
+    private static boolean invalidCoordinate(Double lat, Double lng) {
+        return lat == null || lng == null || !Double.isFinite(lat) || !Double.isFinite(lng)
+                || Math.abs(lat) > 90.0 || Math.abs(lng) > 180.0;
+    }
+
     @GetMapping
     public List<Trip> getAllTrips() {
         return tripRepository.findAll();
@@ -54,7 +61,19 @@ public class TripController {
     }
 
     @PostMapping
-    public Trip createTrip(@RequestBody TripRequestDTO request) {
+    public ResponseEntity<?> createTrip(@RequestBody TripRequestDTO request) {
+        if (request == null || request.getPassengerId() == null || request.getPassengerId().isBlank()
+                || invalidCoordinate(request.getPickupLat(), request.getPickupLong())
+                || invalidCoordinate(request.getDestLat(), request.getDestLong())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "Thông tin chuyến đi hoặc tọa độ không hợp lệ"));
+        }
+        if (request.getPickupLat().equals(request.getDestLat())
+                && request.getPickupLong().equals(request.getDestLong())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "Điểm đón và điểm đến phải khác nhau"));
+        }
+
         Trip trip = new Trip();
         trip.setTripId("trip_" + UUID.randomUUID().toString().substring(0, 8));
         trip.setPassengerId(request.getPassengerId());
@@ -62,15 +81,18 @@ public class TripController {
         trip.setPickupLong(request.getPickupLong());
         trip.setDestLat(request.getDestLat());
         trip.setDestLong(request.getDestLong());
-        
+
         trip.setStatus("PENDING");
+        trip.setFareAmount(fareCalculationService.calculateFare(
+                request.getPickupLat(), request.getPickupLong(),
+                request.getDestLat(), request.getDestLong()
+        ));
         trip.setPaymentStatus("UNPAID");
         trip.setCreatedAt(LocalDateTime.now());
         trip.setVersion(0);
-        
+
         Trip savedTrip = tripRepository.save(trip);
-        
-        // Tạo Kafka Event
+
         TripRequestedEvent.EventMetadata metadata = TripRequestedEvent.EventMetadata.builder()
                 .event_id("req_" + UUID.randomUUID().toString().substring(0, 8))
                 .correlation_id(savedTrip.getTripId())
@@ -78,7 +100,7 @@ public class TripController {
                 .timestamp(LocalDateTime.now().toString())
                 .source("booking-service")
                 .build();
-                
+
         TripRequestedEvent.Payload payload = TripRequestedEvent.Payload.builder()
                 .trip_id(savedTrip.getTripId())
                 .passenger_id(savedTrip.getPassengerId())
@@ -88,11 +110,111 @@ public class TripController {
                 .destination_long(savedTrip.getDestLong())
                 .vehicle_type(request.getVehicleType())
                 .build();
-                
-        TripRequestedEvent event = new TripRequestedEvent(metadata, payload);
-        kafkaProducerService.sendTripRequestedEvent(event);
-        
-        return savedTrip;
+
+        kafkaProducerService.sendTripRequestedEvent(new TripRequestedEvent(metadata, payload));
+        return ResponseEntity.ok(savedTrip);
+    }
+
+    /**
+     * Tài xế chấp nhận chuyến đi được ghép (MATCHED -> ACCEPTED)
+     */
+    @PutMapping("/{tripId}/accept")
+    public ResponseEntity<?> acceptTrip(@PathVariable String tripId) {
+        Trip trip = tripRepository.findById(tripId).orElse(null);
+        if (trip == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "Không tìm thấy chuyến đi: " + tripId));
+        }
+
+        if (!"MATCHED".equals(trip.getStatus())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "Chuyến đi phải ở trạng thái MATCHED mới có thể chấp nhận. Trạng thái hiện tại: " + trip.getStatus()));
+        }
+
+        trip.setStatus("ACCEPTED");
+        Trip updatedTrip = tripRepository.save(trip);
+
+        TripRequestedEvent.EventMetadata metadata = TripRequestedEvent.EventMetadata.builder()
+                .event_id("acc_" + UUID.randomUUID().toString().substring(0, 8))
+                .correlation_id(tripId)
+                .event_type("TRIP_ACCEPTED")
+                .timestamp(LocalDateTime.now().toString())
+                .source("booking-service")
+                .build();
+
+        TripAcceptedEvent.Payload payload = TripAcceptedEvent.Payload.builder()
+                .trip_id(tripId)
+                .driver_id(trip.getDriverId())
+                .passenger_id(trip.getPassengerId())
+                .accepted_at(LocalDateTime.now())
+                .build();
+
+        kafkaProducerService.sendTripAcceptedEvent(new TripAcceptedEvent(metadata, payload));
+        return ResponseEntity.ok(updatedTrip);
+    }
+
+    /**
+     * Tài xế từ chối chuyến đi được ghép (MATCHED -> CANCELED + Saga giải phóng tài xế)
+     */
+    @PutMapping("/{tripId}/reject")
+    public ResponseEntity<?> rejectTrip(@PathVariable String tripId, @RequestBody(required = false) TripCancelDTO rejectDTO) {
+        Trip trip = tripRepository.findById(tripId).orElse(null);
+        if (trip == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "Không tìm thấy chuyến đi: " + tripId));
+        }
+
+        if (!"MATCHED".equals(trip.getStatus())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "Chỉ có thể từ chối chuyến đi ở trạng thái MATCHED. Trạng thái hiện tại: " + trip.getStatus()));
+        }
+
+        String reason = (rejectDTO != null && rejectDTO.getReason() != null && !rejectDTO.getReason().isBlank())
+                ? rejectDTO.getReason()
+                : "DRIVER_REJECTED";
+
+        trip.setStatus("CANCELED");
+        trip.setCancelReason(reason);
+        Trip updatedTrip = tripRepository.save(trip);
+
+        LocalDateTime now = LocalDateTime.now();
+
+        TripRequestedEvent.EventMetadata rejectMetadata = TripRequestedEvent.EventMetadata.builder()
+                .event_id("rej_" + UUID.randomUUID().toString().substring(0, 8))
+                .correlation_id(tripId)
+                .event_type("TRIP_REJECTED")
+                .timestamp(now.toString())
+                .source("booking-service")
+                .build();
+
+        TripRejectedEvent.Payload rejectPayload = TripRejectedEvent.Payload.builder()
+                .trip_id(tripId)
+                .driver_id(trip.getDriverId())
+                .passenger_id(trip.getPassengerId())
+                .reason(reason)
+                .rejected_at(now)
+                .build();
+        kafkaProducerService.sendTripRejectedEvent(new TripRejectedEvent(rejectMetadata, rejectPayload));
+
+        // Giao dịch bù trừ Saga: thông báo Matching giải phóng tài xế về AVAILABLE
+        TripRequestedEvent.EventMetadata cancelMetadata = TripRequestedEvent.EventMetadata.builder()
+                .event_id("can_" + UUID.randomUUID().toString().substring(0, 8))
+                .correlation_id(tripId)
+                .event_type("TRIP_CANCELLED")
+                .timestamp(now.toString())
+                .source("booking-service")
+                .build();
+
+        TripCancelledEvent.Payload cancelPayload = TripCancelledEvent.Payload.builder()
+                .trip_id(tripId)
+                .passenger_id(trip.getPassengerId())
+                .driver_id(trip.getDriverId())
+                .cancel_reason(reason)
+                .cancelled_at(now)
+                .build();
+        kafkaProducerService.sendTripCancelledEvent(new TripCancelledEvent(cancelMetadata, cancelPayload));
+
+        return ResponseEntity.ok(updatedTrip);
     }
 
     /**
@@ -114,7 +236,6 @@ public class TripController {
         trip.setStatus("STARTED");
         Trip updatedTrip = tripRepository.save(trip);
 
-        // Bắn sự kiện trip.started
         TripRequestedEvent.EventMetadata metadata = TripRequestedEvent.EventMetadata.builder()
                 .event_id("sta_" + UUID.randomUUID().toString().substring(0, 8))
                 .correlation_id(tripId)
@@ -152,7 +273,6 @@ public class TripController {
                     .body(Map.of("message", "Không thể hoàn thành chuyến đi ở trạng thái: " + trip.getStatus()));
         }
 
-        // Tính cước phí Haversine
         BigDecimal fare = fareCalculationService.calculateFare(
                 trip.getPickupLat(), trip.getPickupLong(),
                 trip.getDestLat(), trip.getDestLong()
@@ -160,10 +280,9 @@ public class TripController {
 
         trip.setStatus("COMPLETED");
         trip.setFareAmount(fare);
-        trip.setPaymentStatus("PAID_SIMULATED"); // Mô phỏng thanh toán hoàn tất
+        trip.setPaymentStatus("PAID_SIMULATED");
         Trip updatedTrip = tripRepository.save(trip);
 
-        // Bắn sự kiện trip.completed
         TripRequestedEvent.EventMetadata metadata = TripRequestedEvent.EventMetadata.builder()
                 .event_id("com_" + UUID.randomUUID().toString().substring(0, 8))
                 .correlation_id(tripId)
@@ -187,7 +306,7 @@ public class TripController {
     }
 
     /**
-     * Hủy chuyến đi (PENDING, ACCEPTED, STARTED -> CANCELED)
+     * Hủy chuyến đi (PENDING, MATCHED, ACCEPTED, STARTED -> CANCELED)
      * Kích hoạt giao dịch bù trừ Saga
      */
     @PutMapping("/{tripId}/cancel")
@@ -204,10 +323,10 @@ public class TripController {
         }
 
         if ("CANCELED".equals(trip.getStatus())) {
-            return ResponseEntity.ok(trip); // Idempotent cancel
+            return ResponseEntity.ok(trip);
         }
 
-        String reason = (cancelDTO != null && cancelDTO.getReason() != null)
+        String reason = (cancelDTO != null && cancelDTO.getReason() != null && !cancelDTO.getReason().isBlank())
                 ? cancelDTO.getReason()
                 : "PASSENGER_CANCELED";
 
@@ -215,7 +334,6 @@ public class TripController {
         trip.setCancelReason(reason);
         Trip updatedTrip = tripRepository.save(trip);
 
-        // Bắn sự kiện trip.cancelled (Giao dịch bù trừ)
         TripRequestedEvent.EventMetadata metadata = TripRequestedEvent.EventMetadata.builder()
                 .event_id("can_" + UUID.randomUUID().toString().substring(0, 8))
                 .correlation_id(tripId)
@@ -237,9 +355,6 @@ public class TripController {
         return ResponseEntity.ok(updatedTrip);
     }
 
-    /**
-     * Bắt ngoại lệ xung đột đồng thời (Optimistic Locking) khi 2 thao tác tranh chấp cùng 1 record
-     */
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<?> handleOptimisticLockingFailure(OptimisticLockingFailureException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(

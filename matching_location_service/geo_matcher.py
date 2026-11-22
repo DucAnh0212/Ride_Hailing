@@ -1,5 +1,6 @@
 import os
 import json
+import signal
 import uuid
 import time
 import logging
@@ -8,17 +9,17 @@ import requests
 from confluent_kafka import Consumer, Producer
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from driver_lifecycle import finished, finish_trip, reconcile
+from driver_lifecycle import LocationClient, finished, finish_trip, reconcile
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | NODE: Matching-Worker | %(levelname)s | %(message)s')
 
 
 class Matcher:
-    def __init__(self, db, producer):
+    def __init__(self, db, producer, location_client):
         self.db = db
-        self.drivers = db['LiveLocations']
         self.producer = producer
+        self.location_client = location_client
 
     def publish(self, topic, event):
         errors = []
@@ -35,9 +36,10 @@ class Matcher:
             raise ValueError('Missing event/trip ID')
         if metadata['correlation_id'] != trip_id:
             raise ValueError('Correlation ID differs from trip ID')
-        # FIX: terminal events release ONLY the reservation owned by this trip.
+        # Terminal events release ONLY the reservation owned by this trip.
         if topic in ('trip.completed', 'trip.cancelled'):
-            count = finish_trip(self.db, trip_id, 'COMPLETED' if topic == 'trip.completed' else 'CANCELED')
+            count = finish_trip(self.db, self.location_client, trip_id,
+                                'COMPLETED' if topic == 'trip.completed' else 'CANCELED')
             logging.info('RELEASE | trip=%s released=%s', trip_id, count)
             return
         if topic != 'trip.requested' or finished(self.db, trip_id):
@@ -46,76 +48,96 @@ class Matcher:
         if cached:
             self.publish(cached['topic'], cached['event'])
             return
-        # Keep compatibility with events already processed by the pre-fix worker.
         if self.db['ProcessedTrips'].find_one({'_id': event_id}):
             return
         lat, lng = payload['pickup_lat'], payload['pickup_long']
-        # A crash after reservation but before publishing can reuse the same lock.
-        best = self.drivers.find_one({'status': 'BUSY', 'active_trip_id': trip_id})
-        def distance(driver):
-            coordinates = driver['location']['coordinates']
-            return (abs(coordinates[0] - lng) + abs(coordinates[1] - lat)) * 111000
-        if best is None:
-            candidates = list(self.drivers.find({'status': 'AVAILABLE', 'location': {'$near': {
-                '$geometry': {'type': 'Point', 'coordinates': [lng, lat]}, '$maxDistance': 3000}}}).limit(5))
-            # Same ETA ranking as before; reserve only the best available candidate.
-            for driver in sorted(candidates, key=distance):
-                best = self.drivers.find_one_and_update(
-                    {'driver_id': driver['driver_id'], 'status': 'AVAILABLE'},
-                    {'$set': {'status': 'BUSY', 'active_trip_id': trip_id}})
-                if best is not None:
-                    break
+        reservation = self.location_client.reserve(trip_id, lat, lng, max_distance_m=3000, limit=5)
         # A cancellation can be processed by another worker during selection.
         if finished(self.db, trip_id):
-            finish_trip(self.db, trip_id, 'CANCELED')
+            finish_trip(self.db, self.location_client, trip_id, 'CANCELED')
             return
-        if best is not None:
-            meters = distance(best)
+        if reservation.get('matched'):
             output_topic, event_type = 'driver.matched', 'DRIVER_MATCHED'
-            output = {'trip_id': trip_id, 'driver_id': str(best['driver_id']),
-                      'distance_to_pickup_km': round(meters / 1000, 2),
-                      'estimated_time_arrival_mins': int(((meters / 9.7) + 45) // 60),
-                      'destination_lat': payload.get('destination_lat'),
-                      'destination_long': payload.get('destination_long')}
+            output = {
+                'trip_id': trip_id,
+                'driver_id': str(reservation['driver_id']),
+                'distance_to_pickup_km': reservation['distance_to_pickup_km'],
+                'estimated_time_arrival_mins': reservation['estimated_time_arrival_mins'],
+                'destination_lat': payload.get('destination_lat'),
+                'destination_long': payload.get('destination_long'),
+            }
         else:
             output_topic, event_type = 'matching.failed', 'MATCHING_FAILED'
             output = {'trip_id': trip_id, 'reason': 'TIMEOUT_NO_DRIVERS'}
-        result = {'metadata': {'event_id': uuid.uuid4().hex, 'correlation_id': trip_id,
-                              'event_type': event_type, 'timestamp': datetime.utcnow().isoformat() + 'Z',
-                              'source': 'matching-service'}, 'payload': output}
+        result = {
+            'metadata': {
+                'event_id': uuid.uuid4().hex,
+                'correlation_id': trip_id,
+                'event_type': event_type,
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'source': 'matching-service',
+            },
+            'payload': output,
+        }
         # Persist output before publish; retries replay the same event ID.
-        self.db['MatchingResults'].update_one({'_id': trip_id}, {'$setOnInsert': {
-            'topic': output_topic, 'event': result}}, upsert=True)
+        self.db['MatchingResults'].update_one(
+            {'_id': trip_id},
+            {'$setOnInsert': {'topic': output_topic, 'event': result}},
+            upsert=True,
+        )
         cached = self.db['MatchingResults'].find_one({'_id': trip_id})
         self.publish(cached['topic'], cached['event'])
-        self.db['ProcessedTrips'].update_one({'_id': event_id}, {'$setOnInsert': {
-            'processed_at': datetime.utcnow()}}, upsert=True)
+        self.db['ProcessedTrips'].update_one(
+            {'_id': event_id},
+            {'$setOnInsert': {'processed_at': datetime.utcnow()}},
+            upsert=True,
+        )
         logging.info('%s | trip=%s driver=%s', event_type, trip_id, output.get('driver_id'))
 
 
 def main():
     client = MongoClient(os.getenv('MONGO_URI', 'mongodb://localhost:27017/'))
-    db = client['RideHailingDB']
-    db['LiveLocations'].create_index([('location', '2dsphere')])
-    db['LiveLocations'].create_index('driver_id', unique=True)
-    db['LiveLocations'].create_index('active_trip_id', unique=True, sparse=True)
+    mongo_db = os.getenv('MONGO_DB', 'MatchingDB')
+    db = client[mongo_db]
+    location_url = os.getenv('LOCATION_SERVICE_URL', 'http://localhost:8000')
+    location_client = LocationClient(location_url)
     broker = os.getenv('KAFKA_BROKER', '127.0.0.1:9092')
-    # Existing committed trip.requested offsets are preserved by the same group.
-    consumer = Consumer({'bootstrap.servers': broker, 'group.id': 'matching_group_v2',
-                         'auto.offset.reset': 'earliest', 'enable.auto.commit': False})
+    consumer = Consumer({
+        'bootstrap.servers': broker,
+        'group.id': 'matching_group_v2',
+        'auto.offset.reset': 'earliest',
+        'enable.auto.commit': False,
+        'allow.auto.create.topics': True,
+        'topic.metadata.refresh.interval.ms': 5000,
+        'session.timeout.ms': 10000,
+        'heartbeat.interval.ms': 3000,
+    })
     consumer.subscribe(['trip.requested', 'trip.completed', 'trip.cancelled'])
-    matcher = Matcher(db, Producer({'bootstrap.servers': broker}))
+    matcher = Matcher(db, Producer({'bootstrap.servers': broker}), location_client)
     last_reconcile = 0
-    logging.info('Matching ready: requested/completed/cancelled; trip-owned reservations')
+    running = True
+
+    def _stop(signum, _frame):
+        nonlocal running
+        logging.info('Received signal %s; shutting down cleanly to leave Kafka group...', signum)
+        running = False
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    logging.info('Matching ready: db=%s location=%s', mongo_db, location_url)
     try:
-        while True:
+        while running:
             if time.monotonic() - last_reconcile >= 15:
                 last_reconcile = time.monotonic()
                 try:
-                    if db['LiveLocations'].find_one({'status': 'BUSY', 'active_trip_id': {'$exists': True}}):
-                        response = requests.get(os.getenv('BOOKING_SERVICE_URL', 'http://localhost:8080') + '/api/trips', timeout=5)
+                    busy = location_client.list_busy()
+                    if busy:
+                        response = requests.get(
+                            os.getenv('BOOKING_SERVICE_URL', 'http://localhost:8080') + '/api/trips',
+                            timeout=5,
+                        )
                         response.raise_for_status()
-                        count = reconcile(db, response.json())
+                        count = reconcile(db, location_client, response.json())
                         if count:
                             logging.info('RECONCILE | released=%s', count)
                 except Exception as error:
@@ -127,7 +149,7 @@ def main():
                 matcher.handle(msg.topic(), json.loads(msg.value().decode('utf-8')))
             except (ValueError, KeyError, TypeError, UnicodeDecodeError) as error:
                 logging.error('Invalid event skipped on %s: %s', msg.topic(), error)
-            # Database/Kafka errors escape and restart the worker with uncommitted offset.
+            # Database/Kafka/HTTP errors escape and restart the worker with uncommitted offset.
             consumer.commit(message=msg, asynchronous=False)
     except KeyboardInterrupt:
         pass

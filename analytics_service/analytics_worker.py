@@ -1,5 +1,6 @@
 import os
 import json
+import signal
 import logging
 from datetime import datetime
 from confluent_kafka import Consumer
@@ -21,7 +22,7 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 try:
     # KẾT NỐI DATA WAREHOUSE 
     client = MongoClient(MONGO_URI)
-    dwh_db = client["DataWarehouseDB"] 
+    dwh_db = client[os.getenv("MONGO_DB", "DataWarehouseDB")] 
     fact_events = dwh_db["Fact_Events"]
     dlq_collection = dwh_db["DeadLetterQueue"] # Hàng đợi thư chết
     
@@ -29,19 +30,39 @@ try:
     consumer = Consumer({
         'bootstrap.servers': KAFKA_BROKER,
         'group.id': 'analytics_data_lake_group',
-        'auto.offset.reset': 'earliest' # Đọc lại từ đầu để vét sạch data lịch sử
+        'auto.offset.reset': 'earliest', # Đọc lại từ đầu để vét sạch data lịch sử
+        'allow.auto.create.topics': True,
+        'topic.metadata.refresh.interval.ms': 5000,
+        'session.timeout.ms': 10000,
+        'heartbeat.interval.ms': 3000,
     })
     
     # Lắng nghe (Subscribe) toàn bộ các topic hiện có
-    consumer.subscribe(['trip.requested', 'driver.matched', 'matching.failed', 'trip.started', 'trip.completed', 'trip.cancelled'])
+    consumer.subscribe([
+        'trip.requested', 'driver.matched', 'matching.failed',
+        'trip.accepted', 'trip.rejected',
+        'trip.started', 'trip.completed', 'trip.cancelled'
+    ])
     
     logging.info("ANALYTICS ELT WORKER ĐÃ SẴN SÀNG HÚT DỮ LIỆU VỀ DATA WAREHOUSE.")
 except Exception as e:
     logging.error(f"Lỗi khởi tạo hạ tầng: {e}")
     exit(1)
 
+running = True
+
+
+def _stop(signum, _frame):
+    global running
+    logging.info(f"Nhận tín hiệu {signum}; đang đóng Analytics Consumer an toàn...")
+    running = False
+
+
+signal.signal(signal.SIGTERM, _stop)
+signal.signal(signal.SIGINT, _stop)
+
 try:
-    while True:
+    while running:
         msg = consumer.poll(1.0)
         
         if msg is None:
