@@ -20,7 +20,6 @@ test_*.ps1
 playwright.config.*
 /check_db.py
 /matching_location_service/mock_trip.py
-/matching_location_service/driver_simulator.py
 /docs/driver-wait-fix-20261117/
 /.vscode/
 target/
